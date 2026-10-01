@@ -13,7 +13,7 @@
       <div>
         <div class="eyebrow">BINANCE • SPOT • USDT</div>
         <h1>Momentum Scanner</h1>
-        <p class="subtitle">Find green daily candles at +20% or higher followed by a <b>🔴 → 🔴 → 🟢</b> 1H pattern.</p>
+        <p class="subtitle">Find a <b>+20% daily move</b> with the latest completed 1H candles forming <b>🔴 → 🔴 → 🟢</b>.</p>
       </div>
       <div class="status-card">
         <span id="statusDot" class="status-dot idle"></span>
@@ -34,6 +34,13 @@
         <label>
           <span>Minimum latest 1H green candle</span>
           <div class="input-wrap"><input id="hourGreenMin" type="number" value="0" step="0.1" min="0"><b>%</b></div>
+        </label>
+        <label>
+          <span>Daily candle</span>
+          <select id="dailyMode" class="full-select">
+            <option value="current" selected>Current day (live)</option>
+            <option value="completed">Last completed day</option>
+          </select>
         </label>
         <label>
           <span>Results</span>
@@ -60,6 +67,22 @@
       <div class="stat panel"><span>Daily candidates</span><strong id="dailyCandidates">—</strong></div>
       <div class="stat panel"><span>Exact matches</span><strong id="matchCount">—</strong></div>
       <div class="stat panel"><span>Last scan</span><strong id="lastScan">—</strong></div>
+    </section>
+
+    <section class="panel diagnostics">
+      <div class="table-head">
+        <div>
+          <h2>Scan diagnostics</h2>
+          <p>This shows exactly where symbols are being filtered out.</p>
+        </div>
+      </div>
+      <div class="diag-grid">
+        <div><span>Pairs scanned</span><strong id="diagScanned">0</strong></div>
+        <div><span>Volume qualified</span><strong id="diagVolume">0</strong></div>
+        <div><span>Daily qualified</span><strong id="diagDaily">0</strong></div>
+        <div><span>1H exact matches</span><strong id="diagHourly">0</strong></div>
+        <div><span>Total matches</span><strong id="diagMatches">0</strong></div>
+      </div>
     </section>
 
     <section class="panel table-panel">
