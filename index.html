@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Binance Spot momentum scanner for a +20% daily candle and 1H red-red-green setup.">
+  <title>Binance Momentum Scanner</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="app">
+    <header class="hero">
+      <div>
+        <div class="eyebrow">BINANCE • SPOT • USDT</div>
+        <h1>Momentum Scanner</h1>
+        <p class="subtitle">Find green daily candles at +20% or higher followed by a <b>🔴 → 🔴 → 🟢</b> 1H pattern.</p>
+      </div>
+      <div class="status-card">
+        <span id="statusDot" class="status-dot idle"></span>
+        <span id="statusText">Ready to scan</span>
+      </div>
+    </header>
+
+    <section class="controls panel">
+      <div class="control-grid">
+        <label>
+          <span>Daily minimum</span>
+          <div class="input-wrap"><input id="dailyMin" type="number" value="20" step="0.1" min="0"><b>%</b></div>
+        </label>
+        <label>
+          <span>Minimum 24H quote volume</span>
+          <div class="input-wrap"><input id="volumeMin" type="number" value="5000000" step="500000" min="0"><b>USDT</b></div>
+        </label>
+        <label>
+          <span>Minimum latest 1H green candle</span>
+          <div class="input-wrap"><input id="hourGreenMin" type="number" value="0" step="0.1" min="0"><b>%</b></div>
+        </label>
+        <label>
+          <span>Results</span>
+          <div class="input-wrap"><input id="maxResults" type="number" value="20" min="1" max="100"><b>max</b></div>
+        </label>
+      </div>
+      <div class="actions">
+        <button id="scanBtn" class="primary">Scan Binance Spot</button>
+        <button id="stopBtn" class="secondary" disabled>Stop</button>
+        <label class="toggle"><input id="autoRefresh" type="checkbox"><span></span> Auto refresh</label>
+        <select id="refreshMinutes" disabled>
+          <option value="5">Every 5 min</option>
+          <option value="10" selected>Every 10 min</option>
+          <option value="15">Every 15 min</option>
+          <option value="30">Every 30 min</option>
+        </select>
+      </div>
+      <div class="progress"><div id="progressBar"></div></div>
+      <div id="progressText" class="progress-text">No scan started.</div>
+    </section>
+
+    <section class="stats">
+      <div class="stat panel"><span>Pairs scanned</span><strong id="pairsScanned">—</strong></div>
+      <div class="stat panel"><span>Daily candidates</span><strong id="dailyCandidates">—</strong></div>
+      <div class="stat panel"><span>Exact matches</span><strong id="matchCount">—</strong></div>
+      <div class="stat panel"><span>Last scan</span><strong id="lastScan">—</strong></div>
+    </section>
+
+    <section class="panel table-panel">
+      <div class="table-head">
+        <div>
+          <h2>Matches</h2>
+          <p>Completed candles only. Pattern uses the last three completed 1H candles.</p>
+        </div>
+        <button id="exportBtn" class="secondary small" disabled>Export CSV</button>
+      </div>
+
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Coin</th>
+              <th>1D</th>
+              <th>1H -2</th>
+              <th>1H -1</th>
+              <th>1H Last</th>
+              <th>24H Vol</th>
+              <th>Chart</th>
+            </tr>
+          </thead>
+          <tbody id="resultsBody">
+            <tr class="empty"><td colspan="8">Run a scan to find matching coins.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer>
+      <span>Public market data • No API key required</span>
+      <span>Not financial advice</span>
+    </footer>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
