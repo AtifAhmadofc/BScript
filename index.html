@@ -1,186 +1,273 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="UTF-8">
   <meta
     name="viewport"
-    content="width=device-width, initial-scale=1.0, viewport-fit=cover"
-  />
+    content="width=device-width, initial-scale=1.0"
+  >
 
-  <title>Binance Spot USDT Momentum Scanner v1.0.3</title>
+  <meta name="theme-color" content="#080b12">
 
-  <link rel="stylesheet" href="style.css" />
+  <title>Binance Momentum Scanner v1.0.4</title>
+
+  <link rel="stylesheet" href="style.css">
 </head>
 
 <body>
-  <main class="app">
+
+  <main class="container">
 
     <!-- HERO -->
-    <header class="hero">
+    <section class="hero">
+
       <div class="eyebrow">
-        BINANCE • SPOT • USDT • v1.0.3
+        BINANCE • SPOT • USDT
       </div>
 
-      <h1>Momentum Scanner</h1>
+      <div class="title-row">
 
-      <p>
-        Find Spot USDT coins using configurable 1D and 1H momentum
-        conditions with live Binance data.
-      </p>
-    </header>
+        <div>
+          <h1>Momentum Scanner</h1>
+
+          <p>
+            Scan Binance Spot USDT pairs using 24H volume,
+            optional 1D momentum, and optional completed 1H
+            candle patterns.
+          </p>
+        </div>
+
+        <div class="version">
+          v 1.0.4
+        </div>
+
+      </div>
+
+    </section>
 
 
     <!-- SETTINGS -->
     <section class="card settings-card">
 
       <div class="section-title">
+
         <div>
           <h2>Scanner Settings</h2>
+
           <span>
-            Enable or disable each condition independently.
+            Enable or disable individual market conditions.
           </span>
         </div>
+
       </div>
 
 
       <div class="settings-grid">
 
-        <!-- 1D -->
-        <div class="condition-card">
+        <!-- 1D TOGGLE -->
+        <div class="setting toggle-setting">
 
-          <label class="check-row">
+          <label class="check-control">
+
             <input
-              id="enableDaily"
               type="checkbox"
+              id="enableDaily"
               checked
-            />
+            >
 
-            <span>
-              Require 1D condition
+            <span class="check-box"></span>
+
+            <span class="check-content">
+
+              <strong>
+                Enable 1D condition
+              </strong>
+
+              <small>
+                Current daily candle must be green
+                and meet the minimum percentage.
+              </small>
+
             </span>
+
           </label>
 
-          <label class="field">
-            <span>
-              Daily minimum %
+        </div>
+
+
+        <!-- 1H TOGGLE -->
+        <div class="setting toggle-setting">
+
+          <label class="check-control">
+
+            <input
+              type="checkbox"
+              id="enableHourly"
+              checked
+            >
+
+            <span class="check-box"></span>
+
+            <span class="check-content">
+
+              <strong>
+                Enable 1H condition
+              </strong>
+
+              <small>
+                Check the selected completed-candle pattern.
+              </small>
+
             </span>
+
+          </label>
+
+        </div>
+
+
+        <!-- DAILY MIN -->
+        <div
+          class="setting input-setting"
+          id="dailySetting"
+        >
+
+          <label for="dailyMin">
+            Minimum 1D %
+          </label>
+
+          <div class="input-wrap">
 
             <input
               id="dailyMin"
               type="number"
               value="20"
               step="0.1"
-            />
-          </label>
+              min="0"
+            >
+
+            <span>%</span>
+
+          </div>
 
         </div>
 
 
-        <!-- 1H -->
-        <div class="condition-card">
+        <!-- VOLUME -->
+        <div class="setting input-setting">
 
-          <label class="check-row">
+          <label for="volumeMin">
+            Minimum 24H Quote Volume
+          </label>
+
+          <div class="input-wrap">
+
             <input
-              id="enableHourly"
-              type="checkbox"
-              checked
-            />
+              id="volumeMin"
+              type="number"
+              value="5"
+              step="0.1"
+              min="0"
+            >
 
-            <span>
-              Require 1H condition
-            </span>
-          </label>
+            <span>$M</span>
 
-          <label class="field">
-            <span>
-              Hourly pattern
-            </span>
-
-            <select id="hourlyPattern">
-
-              <option value="3">
-                🔴 🔴 🟢 — Last 3 completed candles
-              </option>
-
-              <option value="4">
-                🔴 🔴 🔴 🟢 — Last 4 completed candles
-              </option>
-
-            </select>
-          </label>
+          </div>
 
         </div>
 
 
         <!-- HOURLY MIN -->
-        <label class="field standalone-field">
+        <div
+          class="setting input-setting"
+          id="hourlyMinSetting"
+        >
 
-          <span>
-            Latest 1H minimum %
-          </span>
+          <label for="hourlyMin">
+            Minimum Last Green 1H %
+          </label>
 
-          <input
-            id="hourlyMin"
-            type="number"
-            value="0"
-            step="0.1"
-          />
+          <div class="input-wrap">
 
-        </label>
+            <input
+              id="hourlyMin"
+              type="number"
+              value="0"
+              step="0.1"
+              min="-100"
+            >
+
+            <span>%</span>
+
+          </div>
+
+        </div>
 
 
-        <!-- VOLUME -->
-        <label class="field standalone-field">
+        <!-- PATTERN -->
+        <div
+          class="setting input-setting"
+          id="patternSetting"
+        >
 
-          <span>
-            Minimum 24H volume
-          </span>
+          <label for="patternLength">
+            1H Pattern
+          </label>
 
-          <input
-            id="volumeMin"
-            type="number"
-            value="5000000"
-            step="100000"
-          />
+          <select id="patternLength">
 
-        </label>
+            <option value="3">
+              3 Candles — 🔴 🔴 🟢
+            </option>
+
+            <option value="4">
+              4 Candles — 🔴 🔴 🔴 🟢
+            </option>
+
+          </select>
+
+        </div>
 
 
         <!-- MAX RESULTS -->
-        <label class="field standalone-field">
+        <div class="setting input-setting">
 
-          <span>
-            Maximum results
-          </span>
+          <label for="maxResults">
+            Maximum Results
+          </label>
 
-          <input
-            id="maxResults"
-            type="number"
-            value="20"
-            min="1"
-            max="100"
-          />
+          <div class="input-wrap">
 
-        </label>
+            <input
+              id="maxResults"
+              type="number"
+              value="50"
+              step="1"
+              min="1"
+              max="500"
+            >
+
+          </div>
+
+        </div>
 
       </div>
 
 
-      <!-- BUTTONS -->
-      <div class="actions">
+      <!-- ACTIONS -->
+      <div class="action-row">
 
         <button
           id="scanBtn"
-          class="btn primary"
+          class="btn btn-primary"
         >
           <span>▶</span>
-          Scan Binance Spot
+          Scan
         </button>
 
 
         <button
           id="stopBtn"
-          class="btn danger"
+          class="btn btn-danger"
           disabled
         >
           <span>■</span>
@@ -190,7 +277,7 @@
 
         <button
           id="exportBtn"
-          class="btn secondary"
+          class="btn btn-secondary"
           disabled
         >
           <span>↓</span>
@@ -210,27 +297,27 @@
         <div>
 
           <div
-            id="statusTitle"
             class="status-title"
+            id="statusTitle"
           >
             Ready to scan
           </div>
 
           <div
-            id="statusText"
             class="status-text"
+            id="statusText"
           >
-            Click "Scan Binance Spot" to begin.
+            Configure your conditions and start the scanner.
           </div>
 
         </div>
 
 
         <div
-          id="statusBadge"
           class="status-badge idle"
+          id="statusBadge"
         >
-          READY
+          IDLE
         </div>
 
       </div>
@@ -239,18 +326,23 @@
       <div class="progress-track">
 
         <div
-          id="progressBar"
           class="progress-bar"
+          id="progressBar"
         ></div>
 
       </div>
 
 
-      <div
-        id="progressText"
-        class="progress-text"
-      >
-        Waiting for scan...
+      <div class="progress-info">
+
+        <span id="progressText">
+          0%
+        </span>
+
+        <span id="progressCount">
+          0 / 0
+        </span>
+
       </div>
 
     </section>
@@ -260,26 +352,54 @@
     <section class="stats-grid">
 
       <div class="stat-card">
-        <span>Binance symbols</span>
-        <strong id="statSymbols">—</strong>
+
+        <span>
+          Binance Symbols
+        </span>
+
+        <strong id="statSymbols">
+          —
+        </strong>
+
       </div>
 
 
       <div class="stat-card">
-        <span>Spot USDT pairs</span>
-        <strong id="statSpot">—</strong>
+
+        <span>
+          Spot USDT Pairs
+        </span>
+
+        <strong id="statSpot">
+          —
+        </strong>
+
       </div>
 
 
       <div class="stat-card">
-        <span>Condition candidates</span>
-        <strong id="statDaily">—</strong>
+
+        <span id="statCandidateLabel">
+          Daily Candidates
+        </span>
+
+        <strong id="statCandidates">
+          —
+        </strong>
+
       </div>
 
 
       <div class="stat-card">
-        <span>Exact matches</span>
-        <strong id="statMatches">—</strong>
+
+        <span id="statMatchLabel">
+          Exact Matches
+        </span>
+
+        <strong id="statMatches">
+          —
+        </strong>
+
       </div>
 
     </section>
@@ -296,57 +416,45 @@
             Results
           </h2>
 
-          <span id="resultsSubtitle">
-            No scan performed yet.
+          <span id="resultsDescription">
+            No scan completed yet.
           </span>
 
         </div>
 
 
-        <div class="live-indicator">
-
-          <i></i>
-
-          Live Binance data
-
+        <div
+          class="result-count"
+          id="resultCount"
+        >
+          0
         </div>
 
       </div>
 
 
-      <div class="table-wrapper">
+      <div class="table-wrap">
 
         <table>
 
-          <thead id="resultsHead">
+          <thead>
 
-            <!-- Generated dynamically -->
+            <tr id="resultsHeadRow">
+              <!-- Dynamic headers -->
+            </tr>
 
           </thead>
 
 
           <tbody id="resultsBody">
 
-            <tr class="empty-row">
+            <tr>
 
-              <td colspan="10">
-
-                <div class="empty-state">
-
-                  <div class="empty-icon">
-                    ⌁
-                  </div>
-
-                  <strong>
-                    No matching coins yet
-                  </strong>
-
-                  <span>
-                    Start a scan to find matching momentum patterns.
-                  </span>
-
-                </div>
-
+              <td
+                colspan="20"
+                class="empty"
+              >
+                Run a scan to see matching pairs.
               </td>
 
             </tr>
@@ -363,21 +471,15 @@
     <!-- FOOTER -->
     <footer>
 
-      <span>
-        Public Binance Spot API
-      </span>
+      Binance Spot Momentum Scanner
 
       <span>•</span>
 
-      <span>
-        No API key required
-      </span>
+      v1.0.4
 
       <span>•</span>
 
-      <span>
-        v1.0.3
-      </span>
+      Public Binance API
 
     </footer>
 
