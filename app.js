@@ -2,781 +2,410 @@
 
 /*
  * Binance Spot USDT Momentum Scanner
+ * Version 1.0.5
  *
- * VERSION 1.0.4
+ * Conditions:
  *
- * IMPORTANT LOGIC:
- *
- * 1D OFF:
- *   - No 1D kline API calls.
- *   - Daily condition is completely skipped.
- *
- * 1H OFF:
- *   - No 1H kline API calls.
- *   - No 1H pattern calculation.
- *   - No 1H filtering.
- *   - No 1H table columns.
- *
- * 1H ON:
- *   3 candles = RED -> RED -> GREEN
- *   4 candles = RED -> RED -> RED -> GREEN
- *
- * Always:
- *   - Binance Spot
- *   - USDT pairs
- *   - Verified Spot permission
- *   - 24H quote volume minimum
+ * 1. Binance Spot only
+ * 2. USDT pairs only
+ * 3. Optional 1D condition
+ * 4. Optional 1H condition
+ * 5. User-selectable color for each of the latest 4 completed 1H candles
+ * 6. Minimum last green 1H percentage
+ * 7. Minimum 24H quote volume
+ * 8. Results sorted by 24H percentage when 1D is enabled
+ * 9. Results sorted by volume when 1D is disabled
  */
 
+const BINANCE_API = "https://api.binance.com/api/v3";
 
-const VERSION = "1.0.4";
+const VERSION = "1.0.5";
 
+let isScanning = false;
+let stopRequested = false;
 
-const API_BASE =
-  "https://api.binance.com";
+let scanResults = [];
 
-
-const ENDPOINTS = {
-
-  exchangeInfo:
-    `${API_BASE}/api/v3/exchangeInfo`,
-
-  ticker24h:
-    `${API_BASE}/api/v3/ticker/24hr`,
-
-  klines:
-    `${API_BASE}/api/v3/klines`
-
-};
-
-
-const CONCURRENCY = 7;
-
-
-let abortController = null;
-
-let lastResults = [];
-
-let lastSettings = null;
+let elapsedTimer = null;
+let scanStartTime = 0;
 
 
 /* =========================================================
    DOM
 ========================================================= */
 
-const $ = (id) =>
-  document.getElementById(id);
+const $ = (id) => document.getElementById(id);
 
+const startBtn = $("startBtn");
+const stopBtn = $("stopBtn");
+const exportBtn = $("exportBtn");
 
-const enableDaily =
-  $("enableDaily");
+const enableDaily = $("enableDaily");
+const enableHourly = $("enableHourly");
 
-const enableHourly =
-  $("enableHourly");
+const dailyMin = $("dailyMin");
+const volumeMin = $("volumeMin");
+const hourlyMin = $("hourlyMin");
+const maxResults = $("maxResults");
 
+const patternCandle4 = $("patternCandle4");
+const patternCandle3 = $("patternCandle3");
+const patternCandle2 = $("patternCandle2");
+const patternCandle1 = $("patternCandle1");
 
-const dailyMinInput =
-  $("dailyMin");
+const patternSection = $("hourlyPatternSection");
+const patternPreview = $("patternPreview");
+const hourlyMinNote = $("hourlyMinNote");
 
-const volumeMinInput =
-  $("volumeMin");
+const connectionStatus = $("connectionStatus");
 
-const hourlyMinInput =
-  $("hourlyMin");
+const scanStatus = $("scanStatus");
+const progressBar = $("progressBar");
 
-const patternLengthInput =
-  $("patternLength");
+const totalPairsEl = $("totalPairs");
+const volumeCandidatesEl = $("volumeCandidates");
+const matchedCountEl = $("matchedCount");
+const elapsedTimeEl = $("elapsedTime");
+const resultCountEl = $("resultCount");
 
-const maxResultsInput =
-  $("maxResults");
-
-
-const dailySetting =
-  $("dailySetting");
-
-const hourlyMinSetting =
-  $("hourlyMinSetting");
-
-const patternSetting =
-  $("patternSetting");
-
-
-const scanBtn =
-  $("scanBtn");
-
-const stopBtn =
-  $("stopBtn");
-
-const exportBtn =
-  $("exportBtn");
-
-
-const statusTitle =
-  $("statusTitle");
-
-const statusText =
-  $("statusText");
-
-const statusBadge =
-  $("statusBadge");
-
-const progressBar =
-  $("progressBar");
-
-const progressText =
-  $("progressText");
-
-const progressCount =
-  $("progressCount");
-
-
-const statSymbols =
-  $("statSymbols");
-
-const statSpot =
-  $("statSpot");
-
-const statCandidates =
-  $("statCandidates");
-
-const statMatches =
-  $("statMatches");
-
-const statCandidateLabel =
-  $("statCandidateLabel");
-
-const statMatchLabel =
-  $("statMatchLabel");
-
-
-const resultsDescription =
-  $("resultsDescription");
-
-const resultCount =
-  $("resultCount");
-
-const resultsHeadRow =
-  $("resultsHeadRow");
-
-const resultsBody =
-  $("resultsBody");
+const resultsHead = $("resultsHead");
+const resultsBody = $("resultsBody");
+const resultsDescription = $("resultsDescription");
 
 
 /* =========================================================
-   STATUS
+   INITIALIZATION
 ========================================================= */
 
-function setStatus(
-  type,
-  title,
-  message
-) {
+document.addEventListener("DOMContentLoaded", () => {
 
-  statusTitle.textContent =
-    title;
+  updateConditionControls();
+  updatePatternPreview();
 
-  statusText.textContent =
-    message;
+  enableDaily.addEventListener("change", updateConditionControls);
+  enableHourly.addEventListener("change", updateConditionControls);
 
-  statusBadge.className =
-    `status-badge ${type}`;
+  patternCandle4.addEventListener("change", updatePatternPreview);
+  patternCandle3.addEventListener("change", updatePatternPreview);
+  patternCandle2.addEventListener("change", updatePatternPreview);
+  patternCandle1.addEventListener("change", updatePatternPreview);
 
+  startBtn.addEventListener("click", startScan);
+  stopBtn.addEventListener("click", stopScan);
+  exportBtn.addEventListener("click", exportCSV);
 
-  const labels = {
-
-    idle: "IDLE",
-
-    running: "SCANNING",
-
-    success: "COMPLETE",
-
-    error: "ERROR",
-
-    stopped: "STOPPED"
-
-  };
+});
 
 
-  statusBadge.textContent =
-    labels[type] ||
-    type.toUpperCase();
+/* =========================================================
+   UI HELPERS
+========================================================= */
 
+function setStatus(text, type = "idle") {
+
+  connectionStatus.textContent = text;
+
+  connectionStatus.className = `status ${type}`;
+}
+
+
+function setProgress(value) {
+
+  const safeValue = Math.max(
+    0,
+    Math.min(100, Number(value) || 0)
+  );
+
+  progressBar.style.width = `${safeValue}%`;
+}
+
+
+function setScanStatus(text) {
+  scanStatus.textContent = text;
+}
+
+
+function formatNumber(value) {
+
+  if (!Number.isFinite(value)) {
+    return "—";
+  }
+
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 0
+  }).format(value);
+}
+
+
+function formatPercent(value) {
+
+  if (!Number.isFinite(value)) {
+    return "—";
+  }
+
+  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+}
+
+
+function formatVolume(value) {
+
+  if (!Number.isFinite(value)) {
+    return "—";
+  }
+
+  if (value >= 1_000_000_000) {
+    return `${(value / 1_000_000_000).toFixed(2)}B`;
+  }
+
+  if (value >= 1_000_000) {
+    return `${(value / 1_000_000).toFixed(2)}M`;
+  }
+
+  if (value >= 1_000) {
+    return `${(value / 1_000).toFixed(2)}K`;
+  }
+
+  return value.toFixed(0);
+}
+
+
+function formatElapsed(seconds) {
+
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+
+  return `${minutes}m ${remainingSeconds}s`;
+}
+
+
+function escapeHTML(value) {
+
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 
 
 /* =========================================================
-   PROGRESS
-========================================================= */
-
-function setProgress(
-  current,
-  total
-) {
-
-  const percent =
-    total > 0
-      ? Math.min(
-          100,
-          Math.round(
-            (current / total) * 100
-          )
-        )
-      : 0;
-
-
-  progressBar.style.width =
-    `${percent}%`;
-
-
-  progressText.textContent =
-    `${percent}%`;
-
-
-  progressCount.textContent =
-    `${current} / ${total}`;
-
-}
-
-
-/* =========================================================
-   RUNNING STATE
-========================================================= */
-
-function setRunning(
-  running
-) {
-
-  scanBtn.disabled =
-    running;
-
-  stopBtn.disabled =
-    !running;
-
-
-  enableDaily.disabled =
-    running;
-
-  enableHourly.disabled =
-    running;
-
-
-  volumeMinInput.disabled =
-    running;
-
-  maxResultsInput.disabled =
-    running;
-
-
-  dailyMinInput.disabled =
-    running ||
-    !enableDaily.checked;
-
-
-  hourlyMinInput.disabled =
-    running ||
-    !enableHourly.checked;
-
-
-  patternLengthInput.disabled =
-    running ||
-    !enableHourly.checked;
-
-}
-
-
-/* =========================================================
-   CONDITION UI
+   CONDITIONS
 ========================================================= */
 
 function updateConditionControls() {
 
-  const dailyOn =
-    enableDaily.checked;
+  dailyMin.disabled = !enableDaily.checked;
 
-  const hourlyOn =
-    enableHourly.checked;
-
-
-  dailySetting.classList.toggle(
+  patternSection.classList.toggle(
     "disabled",
-    !dailyOn
+    !enableHourly.checked
   );
 
+  hourlyMin.disabled = !enableHourly.checked;
 
-  hourlyMinSetting.classList.toggle(
-    "disabled",
-    !hourlyOn
-  );
+  updateHourlyMinimumState();
 
+  updateTableHeader();
 
-  patternSetting.classList.toggle(
-    "disabled",
-    !hourlyOn
-  );
+  updatePatternPreview();
+}
 
 
-  dailyMinInput.disabled =
-    !dailyOn;
+function updateHourlyMinimumState() {
 
-  hourlyMinInput.disabled =
-    !hourlyOn;
+  const lastSelection = patternCandle1.value;
 
-  patternLengthInput.disabled =
-    !hourlyOn;
+  if (!enableHourly.checked) {
 
+    hourlyMinNote.textContent =
+      "1H conditions are disabled.";
 
-  /*
-   * Dynamic statistics labels.
-   */
+    return;
+  }
 
-  if (
-    dailyOn &&
-    hourlyOn
-  ) {
+  if (lastSelection === "red") {
 
-    statCandidateLabel.textContent =
-      "Daily Candidates";
+    hourlyMin.disabled = true;
 
-    statMatchLabel.textContent =
-      "Exact Matches";
+    hourlyMinNote.textContent =
+      "Last candle is fixed to Red, so the green-candle minimum is not applied.";
 
-  } else if (
-    dailyOn &&
-    !hourlyOn
-  ) {
+    return;
+  }
 
-    statCandidateLabel.textContent =
-      "Daily Candidates";
+  hourlyMin.disabled = false;
 
-    statMatchLabel.textContent =
-      "Final Matches";
+  if (lastSelection === "green") {
 
-  } else if (
-    !dailyOn &&
-    hourlyOn
-  ) {
-
-    statCandidateLabel.textContent =
-      "Volume Candidates";
-
-    statMatchLabel.textContent =
-      "1H Matches";
+    hourlyMinNote.textContent =
+      "The minimum 1H % will be applied to the last completed candle.";
 
   } else {
 
-    statCandidateLabel.textContent =
-      "Volume Candidates";
-
-    statMatchLabel.textContent =
-      "Final Matches";
-
+    hourlyMinNote.textContent =
+      "If the actual last candle is green, the minimum 1H % will be applied.";
   }
+}
 
 
-  /*
-   * CRITICAL:
-   *
-   * Header is generated from the actual
-   * checkbox state.
-   */
+function updatePatternPreview() {
 
-  renderTableHeader({
+  const values = [
+    patternCandle4.value,
+    patternCandle3.value,
+    patternCandle2.value,
+    patternCandle1.value
+  ];
 
-    dailyEnabled: dailyOn,
+  const icons = values.map((value) => {
 
-    hourlyEnabled: hourlyOn,
+    if (value === "red") {
+      return "🔴";
+    }
 
-    patternLength:
-      Number(
-        patternLengthInput.value
-      )
+    if (value === "green") {
+      return "🟢";
+    }
 
+    return "⚪";
   });
 
+  patternPreview.textContent = icons.join(" → ");
+
+  updateHourlyMinimumState();
+}
+
+
+function getSelectedPattern() {
+
+  return [
+    patternCandle4.value,
+    patternCandle3.value,
+    patternCandle2.value,
+    patternCandle1.value
+  ];
+}
+
+
+function patternLabel(value) {
+
+  if (value === "red") {
+    return "🔴 Red";
+  }
+
+  if (value === "green") {
+    return "🟢 Green";
+  }
+
+  return "⚪ Any";
 }
 
 
 /* =========================================================
-   SETTINGS
+   BINANCE API
 ========================================================= */
 
-function getSettings() {
+async function binanceFetch(endpoint, params = {}) {
 
-  const dailyEnabled =
-    enableDaily.checked;
+  const query = new URLSearchParams(params);
 
-  const hourlyEnabled =
-    enableHourly.checked;
+  const url =
+    `${BINANCE_API}${endpoint}?${query.toString()}`;
 
-
-  const dailyMin =
-    Number(
-      dailyMinInput.value
-    );
-
-
-  const volumeMin =
-    Number(
-      volumeMinInput.value
-    );
-
-
-  const hourlyMin =
-    Number(
-      hourlyMinInput.value
-    );
-
-
-  const patternLength =
-    Number(
-      patternLengthInput.value
-    );
-
-
-  const maxResults =
-    Number(
-      maxResultsInput.value
-    );
-
-
-  if (
-    !Number.isFinite(volumeMin) ||
-    volumeMin < 0
-  ) {
-
-    throw new Error(
-      "Minimum 24H volume must be 0 or greater."
-    );
-
-  }
-
-
-  if (
-    dailyEnabled &&
-    (
-      !Number.isFinite(dailyMin) ||
-      dailyMin < 0
-    )
-  ) {
-
-    throw new Error(
-      "Minimum 1D percentage must be 0 or greater."
-    );
-
-  }
-
-
-  if (
-    hourlyEnabled &&
-    (
-      !Number.isFinite(hourlyMin) ||
-      hourlyMin < -100
-    )
-  ) {
-
-    throw new Error(
-      "Minimum 1H percentage must be -100 or greater."
-    );
-
-  }
-
-
-  if (
-    hourlyEnabled &&
-    ![3, 4].includes(
-      patternLength
-    )
-  ) {
-
-    throw new Error(
-      "Invalid 1H pattern."
-    );
-
-  }
-
-
-  if (
-    !Number.isFinite(maxResults) ||
-    maxResults < 1 ||
-    maxResults > 500
-  ) {
-
-    throw new Error(
-      "Maximum results must be between 1 and 500."
-    );
-
-  }
-
-
-  return {
-
-    dailyEnabled,
-
-    hourlyEnabled,
-
-    dailyMin,
-
-    volumeMin,
-
-    hourlyMin,
-
-    patternLength,
-
-    maxResults
-
-  };
-
-}
-
-
-/* =========================================================
-   FETCH
-========================================================= */
-
-async function fetchJson(
-  url,
-  signal
-) {
-
-  const response =
-    await fetch(
-      url,
-      {
-        method: "GET",
-
-        signal,
-
-        headers: {
-          "Accept":
-            "application/json"
-        }
-      }
-    );
-
+  const response = await fetch(url);
 
   if (!response.ok) {
 
-    let message =
-      `HTTP ${response.status}`;
-
-
-    try {
-
-      const error =
-        await response.json();
-
-
-      if (
-        error &&
-        error.msg
-      ) {
-
-        message +=
-          `: ${error.msg}`;
-
-      }
-
-    } catch (_) {
-      // Ignore.
-    }
-
-
     throw new Error(
-      message
+      `Binance API error ${response.status}`
     );
-
   }
-
 
   return response.json();
-
 }
 
 
 /* =========================================================
-   SPOT PERMISSION CHECK
+   SPOT SYMBOL VERIFICATION
 ========================================================= */
 
-function containsSpotPermission(
-  value
-) {
+function containsSpotPermission(symbolInfo) {
 
-  if (
-    value === null ||
-    value === undefined
-  ) {
+  const values = [];
 
-    return false;
-
+  if (Array.isArray(symbolInfo.permissions)) {
+    values.push(...symbolInfo.permissions);
   }
 
+  if (Array.isArray(symbolInfo.permissionSets)) {
 
-  if (
-    typeof value === "string"
-  ) {
+    for (const set of symbolInfo.permissionSets) {
 
-    const normalized =
-      value.toLowerCase();
-
-
-    return (
-      normalized === "spot" ||
-      normalized.includes("spot")
-    );
-
+      if (Array.isArray(set)) {
+        values.push(...set);
+      }
+    }
   }
 
-
-  if (
-    Array.isArray(value)
-  ) {
-
-    return value.some(
-      containsSpotPermission
-    );
-
+  if (Array.isArray(symbolInfo.allowedPermissions)) {
+    values.push(...symbolInfo.allowedPermissions);
   }
 
-
-  if (
-    typeof value === "object"
-  ) {
-
-    return Object.values(
-      value
-    ).some(
-      containsSpotPermission
-    );
-
-  }
-
-
-  return false;
-
+  return values.some(
+    (permission) =>
+      String(permission).toUpperCase() === "SPOT"
+  );
 }
 
 
-/* =========================================================
-   STRICT SPOT VERIFICATION
-========================================================= */
+function isVerifiedSpotSymbol(symbolInfo) {
 
-function isVerifiedSpotSymbol(
-  symbol
-) {
-
-  if (
-    !symbol ||
-    symbol.status !== "TRADING"
-  ) {
-
+  if (!symbolInfo) {
     return false;
-
   }
 
-
-  if (
-    symbol.quoteAsset !== "USDT"
-  ) {
-
+  if (symbolInfo.status !== "TRADING") {
     return false;
-
   }
 
+  if (symbolInfo.quoteAsset !== "USDT") {
+    return false;
+  }
 
   /*
-   * Positive Spot indicators.
+   * Binance has changed permission fields over time.
+   * Positive verification is required.
    */
 
-  if (
-    symbol.isSpotTradingAllowed === true ||
-    symbol.spotTradingAllowed === true
-  ) {
-
+  if (symbolInfo.isSpotTradingAllowed === true) {
     return true;
-
   }
 
-
-  if (
-    containsSpotPermission(
-      symbol.permissions
-    )
-  ) {
-
+  if (symbolInfo.spotTradingAllowed === true) {
     return true;
-
   }
 
-
-  if (
-    containsSpotPermission(
-      symbol.permissionSets
-    )
-  ) {
-
+  if (containsSpotPermission(symbolInfo)) {
     return true;
-
   }
-
-
-  if (
-    containsSpotPermission(
-      symbol.allowedPermissions
-    )
-  ) {
-
-    return true;
-
-  }
-
-
-  /*
-   * Fail closed.
-   */
 
   return false;
-
 }
 
 
-/* =========================================================
-   EXCHANGE INFO
-========================================================= */
+async function getSpotSymbols() {
 
-async function getSpotSymbols(
-  signal
-) {
+  const exchangeInfo =
+    await binanceFetch("/exchangeInfo");
 
-  const data =
-    await fetchJson(
-      ENDPOINTS.exchangeInfo,
-      signal
-    );
-
-
-  const symbols =
-    Array.isArray(
-      data.symbols
-    )
-      ? data.symbols
-      : [];
-
-
-  const spotSymbols =
-    symbols.filter(
-      isVerifiedSpotSymbol
-    );
-
-
-  return {
-
-    allSymbols:
-      symbols,
-
-    spotSymbols
-
-  };
-
+  return exchangeInfo.symbols.filter(
+    isVerifiedSpotSymbol
+  );
 }
 
 
@@ -784,21 +413,9 @@ async function getSpotSymbols(
    24H TICKERS
 ========================================================= */
 
-async function getAll24hTickers(
-  signal
-) {
+async function getAll24hTickers() {
 
-  const data =
-    await fetchJson(
-      ENDPOINTS.ticker24h,
-      signal
-    );
-
-
-  return Array.isArray(data)
-    ? data
-    : [];
-
+  return binanceFetch("/ticker/24hr");
 }
 
 
@@ -809,57 +426,29 @@ async function getAll24hTickers(
 async function getKlines(
   symbol,
   interval,
-  limit,
-  signal
+  limit = 10
 ) {
 
-  const url =
-    `${ENDPOINTS.klines}` +
-    `?symbol=${encodeURIComponent(symbol)}` +
-    `&interval=${encodeURIComponent(interval)}` +
-    `&limit=${limit}`;
-
-
-  return fetchJson(
-    url,
-    signal
-  );
-
+  return binanceFetch("/klines", {
+    symbol,
+    interval,
+    limit
+  });
 }
 
 
 /* =========================================================
-   COMPLETED CANDLES
+   COMPLETED KLINES
 ========================================================= */
 
-function getCompletedKlines(
-  klines
-) {
+function getCompletedKlines(klines) {
 
-  const now =
-    Date.now();
-
+  const now = Date.now();
 
   return klines.filter(
-    (kline) => {
-
-      /*
-       * Kline index 6 =
-       * close time.
-       *
-       * We only accept candles
-       * whose close time is already
-       * in the past.
-       */
-
-      return (
-        Number(kline[6]) <
-        now
-      );
-
-    }
+    (candle) =>
+      Number(candle[6]) < now
   );
-
 }
 
 
@@ -867,63 +456,38 @@ function getCompletedKlines(
    DAILY ANALYSIS
 ========================================================= */
 
-function analyzeDailyCandle(
-  kline,
-  minimumPercent
-) {
+async function analyzeDailyCandle(symbol) {
 
-  if (
-    !Array.isArray(kline) ||
-    kline.length < 7
-  ) {
+  const klines = await getKlines(
+    symbol,
+    "1d",
+    3
+  );
 
+  const completed =
+    getCompletedKlines(klines);
+
+  if (completed.length === 0) {
     return null;
-
   }
 
+  const candle =
+    completed[completed.length - 1];
 
-  const open =
-    Number(kline[1]);
+  const open = Number(candle[1]);
+  const close = Number(candle[4]);
 
-  const close =
-    Number(kline[4]);
-
-
-  if (
-    !Number.isFinite(open) ||
-    !Number.isFinite(close) ||
-    open <= 0
-  ) {
-
+  if (!Number.isFinite(open) || open <= 0) {
     return null;
-
   }
 
-
-  const percent =
-    (
-      (close - open) /
-      open
-    ) * 100;
-
+  const change =
+    ((close - open) / open) * 100;
 
   return {
-
-    open,
-
-    close,
-
-    percent,
-
-    green:
-      close > open,
-
-    passes:
-      close > open &&
-      percent >= minimumPercent
-
+    change,
+    green: close > open
   };
-
 }
 
 
@@ -931,215 +495,122 @@ function analyzeDailyCandle(
    HOURLY ANALYSIS
 ========================================================= */
 
-function analyzeHourlyCandle(
-  kline
-) {
-
-  if (
-    !Array.isArray(kline) ||
-    kline.length < 7
-  ) {
-
-    return null;
-
-  }
-
-
-  const open =
-    Number(kline[1]);
-
-  const close =
-    Number(kline[4]);
-
-
-  const openTime =
-    Number(kline[0]);
-
-  const closeTime =
-    Number(kline[6]);
-
-
-  if (
-    !Number.isFinite(open) ||
-    !Number.isFinite(close) ||
-    open <= 0
-  ) {
-
-    return null;
-
-  }
-
-
-  const percent =
-    (
-      (close - open) /
-      open
-    ) * 100;
-
-
-  return {
-
-    open,
-
-    close,
-
-    percent,
-
-    green:
-      close > open,
-
-    red:
-      close < open,
-
-    openTime,
-
-    closeTime
-
-  };
-
-}
-
-
-/* =========================================================
-   HOURLY PATTERN
-========================================================= */
-
-async function checkHourlyPattern(
-  candidate,
-  hourlyMin,
-  patternLength,
-  signal
+async function analyzeHourlyCandle(
+  symbol,
+  selectedPattern
 ) {
 
   /*
-   * This function is ONLY called when
-   * enableHourly === true.
+   * Fetch enough candles to guarantee that
+   * we can get the latest 4 COMPLETED candles.
    */
 
-  const limit =
-    patternLength + 3;
-
-
-  const raw =
-    await getKlines(
-      candidate.symbol,
-      "1h",
-      limit,
-      signal
-    );
-
+  const klines = await getKlines(
+    symbol,
+    "1h",
+    8
+  );
 
   const completed =
-    getCompletedKlines(raw);
+    getCompletedKlines(klines);
 
-
-  if (
-    completed.length <
-    patternLength
-  ) {
-
-    return {
-
-      passes: false,
-
-      candles: []
-
-    };
-
+  if (completed.length < 4) {
+    return null;
   }
-
-
-  /*
-   * Take exactly the latest
-   * N COMPLETED candles.
-   */
-
-  const selected =
-    completed.slice(
-      -patternLength
-    );
-
 
   const candles =
-    selected.map(
-      analyzeHourlyCandle
-    );
+    completed.slice(-4);
 
+  const analyzed = candles.map((candle) => {
 
-  if (
-    candles.some(
-      (candle) => !candle
-    )
-  ) {
+    const open = Number(candle[1]);
+    const close = Number(candle[4]);
+
+    if (!Number.isFinite(open) || open <= 0) {
+      return null;
+    }
+
+    const change =
+      ((close - open) / open) * 100;
 
     return {
-
-      passes: false,
-
-      candles
-
+      open,
+      close,
+      change,
+      red: close < open,
+      green: close > open,
+      timestamp: Number(candle[0]),
+      closeTime: Number(candle[6])
     };
 
+  });
+
+  if (analyzed.some((item) => item === null)) {
+    return null;
   }
 
-
-  const lastIndex =
-    candles.length - 1;
-
-
-  const last =
-    candles[lastIndex];
-
-
   /*
-   * Every candle before the
-   * final candle must be RED.
+   * Match each selected position.
+   *
+   * selectedPattern order:
+   *
+   * [4th Last, 3rd Last, 2nd Last, Last]
    */
 
-  const previousAreRed =
-    candles
-      .slice(0, lastIndex)
-      .every(
-        (candle) =>
-          candle.red
-      );
+  for (let i = 0; i < 4; i++) {
 
+    const required =
+      selectedPattern[i];
+
+    const actual =
+      analyzed[i];
+
+    if (required === "red" && !actual.red) {
+      return null;
+    }
+
+    if (required === "green" && !actual.green) {
+      return null;
+    }
+
+    /*
+     * Any = automatically passes.
+     */
+  }
 
   /*
-   * Final candle must be GREEN.
+   * Minimum Last Green 1H %
+   *
+   * Apply it only when the actual latest candle
+   * is green.
+   *
+   * If the selected last candle is Red, there is
+   * no green last candle to which this condition
+   * can logically apply.
    */
 
-  const lastIsGreen =
-    last.green;
+  const lastCandle =
+    analyzed[3];
 
+  if (lastCandle.green) {
 
-  /*
-   * Final green candle must
-   * meet minimum percentage.
-   */
+    const minimum =
+      Number(hourlyMin.value);
 
-  const lastPercentPasses =
-    last.percent >=
-    hourlyMin;
-
-
-  const passes =
-    previousAreRed &&
-    lastIsGreen &&
-    lastPercentPasses;
-
+    if (
+      Number.isFinite(minimum) &&
+      lastCandle.change < minimum
+    ) {
+      return null;
+    }
+  }
 
   return {
-
-    passes,
-
-    candles,
-
-    lastGreenPercent:
-      last.percent
-
+    candles: analyzed,
+    pattern: selectedPattern,
+    lastChange: lastCandle.change,
+    lastGreen: lastCandle.green
   };
-
 }
 
 
@@ -1151,123 +622,75 @@ async function runWithConcurrency(
   items,
   worker,
   concurrency,
-  onProgress,
-  signal
+  onProgress
 ) {
 
-  const results =
-    new Array(
-      items.length
-    );
-
+  const results = [];
 
   let nextIndex = 0;
-
   let completed = 0;
-
 
   async function runner() {
 
     while (true) {
 
-      if (
-        signal.aborted
-      ) {
+      if (stopRequested) {
+        return;
+      }
 
-        throw new DOMException(
-          "Scan stopped",
-          "AbortError"
+      const index = nextIndex++;
+
+      if (index >= items.length) {
+        return;
+      }
+
+      const item = items[index];
+
+      try {
+
+        const result =
+          await worker(item);
+
+        if (result !== null && result !== undefined) {
+          results.push(result);
+        }
+
+      } catch (error) {
+
+        console.warn(
+          "Worker failed:",
+          item?.symbol || item,
+          error
         );
 
       }
 
-
-      const index =
-        nextIndex++;
-
-
-      if (
-        index >= items.length
-      ) {
-
-        return;
-
-      }
-
-
-      try {
-
-        results[index] =
-          await worker(
-            items[index],
-            index
-          );
-
-      } catch (error) {
-
-        if (
-          error.name ===
-          "AbortError"
-        ) {
-
-          throw error;
-
-        }
-
-
-        results[index] = {
-
-          error:
-            error.message
-
-        };
-
-      }
-
-
       completed++;
 
-
-      if (
-        typeof onProgress ===
-        "function"
-      ) {
-
+      if (onProgress) {
         onProgress(
           completed,
           items.length
         );
-
       }
-
     }
-
   }
-
 
   const workerCount =
     Math.min(
-      concurrency,
-      Math.max(
-        1,
-        items.length
-      )
+      Math.max(1, concurrency),
+      items.length
     );
 
-
-  await Promise.all(
+  const runners =
     Array.from(
-      {
-        length:
-          workerCount
-      },
+      { length: workerCount },
       () => runner()
-    )
-  );
+    );
 
+  await Promise.all(runners);
 
   return results;
-
 }
 
 
@@ -1276,83 +699,53 @@ async function runWithConcurrency(
 ========================================================= */
 
 function buildVolumeCandidates(
-  spotSymbols,
-  tickerMap,
-  volumeMin
+  symbols,
+  tickers
 ) {
 
+  const symbolMap =
+    new Map(
+      symbols.map(
+        (symbol) => [symbol.symbol, symbol]
+      )
+    );
+
   const minimumVolume =
-    volumeMin *
-    1_000_000;
+    Number(volumeMin.value);
 
+  const candidates = [];
 
-  return spotSymbols
-    .map(
-      (symbolInfo) => {
+  for (const ticker of tickers) {
 
-        const ticker =
-          tickerMap.get(
-            symbolInfo.symbol
-          );
+    const symbolInfo =
+      symbolMap.get(ticker.symbol);
 
+    if (!symbolInfo) {
+      continue;
+    }
 
-        if (!ticker) {
+    const quoteVolume =
+      Number(ticker.quoteVolume);
 
-          return null;
+    if (
+      !Number.isFinite(quoteVolume) ||
+      quoteVolume < minimumVolume
+    ) {
+      continue;
+    }
 
-        }
+    const priceChangePercent =
+      Number(ticker.priceChangePercent);
 
+    candidates.push({
+      symbol: ticker.symbol,
+      quoteVolume,
+      priceChangePercent,
+      symbolInfo
+    });
+  }
 
-        const quoteVolume =
-          Number(
-            ticker.quoteVolume
-          );
-
-
-        if (
-          !Number.isFinite(
-            quoteVolume
-          )
-        ) {
-
-          return null;
-
-        }
-
-
-        if (
-          quoteVolume <
-          minimumVolume
-        ) {
-
-          return null;
-
-        }
-
-
-        return {
-
-          symbol:
-            symbolInfo.symbol,
-
-          baseAsset:
-            symbolInfo.baseAsset,
-
-          quoteAsset:
-            symbolInfo.quoteAsset,
-
-          quoteVolume,
-
-          daily: null,
-
-          hourly: null
-
-        };
-
-      }
-    )
-    .filter(Boolean);
-
+  return candidates;
 }
 
 
@@ -1361,127 +754,78 @@ function buildVolumeCandidates(
 ========================================================= */
 
 async function scanDailyCandidates(
-  volumeCandidates,
-  settings,
-  signal
+  candidates
 ) {
 
   /*
-   * CRITICAL:
-   *
-   * If 1D is disabled, return immediately.
-   *
-   * There will be ZERO 1D API requests.
+   * If 1D is disabled, DO NOT make any 1D API calls.
    */
 
-  if (
-    !settings.dailyEnabled
-  ) {
-
-    return volumeCandidates;
-
+  if (!enableDaily.checked) {
+    return candidates;
   }
 
+  const minimumDaily =
+    Number(dailyMin.value);
 
-  if (
-    volumeCandidates.length === 0
-  ) {
-
-    return [];
-
-  }
-
-
-  setStatus(
-    "running",
-    "Checking 1D conditions",
-    `Analyzing current daily candles for ${volumeCandidates.length} volume-qualified pairs.`
+  setScanStatus(
+    `Checking 1D condition for ${candidates.length} candidates...`
   );
 
-
-  const dailyResults =
+  const analyzed =
     await runWithConcurrency(
-
-      volumeCandidates,
+      candidates,
 
       async (candidate) => {
 
-        const klines =
-          await getKlines(
-            candidate.symbol,
-            "1d",
-            1,
-            signal
-          );
-
-
-        const latest =
-          klines[
-            klines.length - 1
-          ];
-
-
         const daily =
-          analyzeDailyCandle(
-            latest,
-            settings.dailyMin
+          await analyzeDailyCandle(
+            candidate.symbol
           );
 
+        if (!daily) {
+          return null;
+        }
+
+        /*
+         * Current daily candle must be green.
+         */
+
+        if (!daily.green) {
+          return null;
+        }
+
+        if (
+          Number.isFinite(minimumDaily) &&
+          daily.change < minimumDaily
+        ) {
+          return null;
+        }
 
         return {
-
-          candidate,
-
-          daily
-
+          ...candidate,
+          dailyChange: daily.change,
+          dailyGreen: daily.green
         };
-
       },
 
-      CONCURRENCY,
+      8,
 
-      (done, total) => {
+      (completed, total) => {
 
-        setProgress(
-          done,
-          total
+        const percent =
+          total > 0
+            ? (completed / total) * 100
+            : 100;
+
+        setProgress(percent);
+        setScanStatus(
+          `Checking 1D: ${completed}/${total}`
         );
-
-      },
-
-      signal
-
-    );
-
-
-  return dailyResults
-    .filter(
-      (result) => {
-
-        return (
-          result &&
-          result.candidate &&
-          result.daily &&
-          result.daily.passes
-        );
-
-      }
-    )
-    .map(
-      (result) => {
-
-        return {
-
-          ...result.candidate,
-
-          daily:
-            result.daily
-
-        };
-
       }
     );
 
+  return analyzed;
 }
 
 
@@ -1490,1258 +834,327 @@ async function scanDailyCandidates(
 ========================================================= */
 
 async function scanHourlyCandidates(
-  candidates,
-  settings,
-  signal
+  candidates
 ) {
 
   /*
-   * =======================================================
-   * THE IMPORTANT FIX
-   * =======================================================
-   *
-   * 1H unchecked:
-   *
-   * return immediately.
-   *
-   * NO:
-   * - 1H API calls
-   * - pattern calculations
-   * - hourly filtering
+   * If 1H is disabled, DO NOT make any 1H API calls.
    */
 
-  if (
-    !settings.hourlyEnabled
-  ) {
-
+  if (!enableHourly.checked) {
     return candidates;
-
   }
 
+  const selectedPattern =
+    getSelectedPattern();
 
-  if (
-    candidates.length === 0
-  ) {
-
-    return [];
-
-  }
-
-
-  const patternText =
-    settings.patternLength === 3
-      ? "RED → RED → GREEN"
-      : "RED → RED → RED → GREEN";
-
-
-  setStatus(
-    "running",
-    "Checking 1H patterns",
-    `Testing ${candidates.length} candidates for ${patternText}.`
+  setScanStatus(
+    `Checking 1H pattern for ${candidates.length} candidates...`
   );
 
-
-  const results =
+  const analyzed =
     await runWithConcurrency(
-
       candidates,
 
       async (candidate) => {
 
         const hourly =
-          await checkHourlyPattern(
-
-            candidate,
-
-            settings.hourlyMin,
-
-            settings.patternLength,
-
-            signal
-
+          await analyzeHourlyCandle(
+            candidate.symbol,
+            selectedPattern
           );
 
+        if (!hourly) {
+          return null;
+        }
 
         return {
-
           ...candidate,
-
           hourly
-
         };
-
       },
 
-      CONCURRENCY,
+      8,
 
-      (done, total) => {
+      (completed, total) => {
 
-        setProgress(
-          done,
-          total
+        const percent =
+          total > 0
+            ? (completed / total) * 100
+            : 100;
+
+        setProgress(percent);
+
+        setScanStatus(
+          `Checking 1H: ${completed}/${total}`
         );
-
-      },
-
-      signal
-
-    );
-
-
-  return results.filter(
-    (candidate) => {
-
-      return (
-        candidate &&
-        candidate.hourly &&
-        candidate.hourly.passes
-      );
-
-    }
-  );
-
-}
-
-
-/* =========================================================
-   DYNAMIC TABLE HEADER
-========================================================= */
-
-function renderTableHeader(
-  settings
-) {
-
-  /*
-   * These columns ALWAYS exist.
-   */
-
-  const headers = [
-
-    "Symbol",
-
-    "24H Volume",
-
-    "1D %"
-
-  ];
-
-
-  /*
-   * 1H columns ONLY exist when
-   * 1H condition is enabled.
-   */
-
-  if (
-    settings.hourlyEnabled
-  ) {
-
-    if (
-      settings.patternLength === 3
-    ) {
-
-      headers.push(
-
-        "1H -2",
-
-        "1H -1",
-
-        "1H Last"
-
-      );
-
-    } else {
-
-      headers.push(
-
-        "1H -3",
-
-        "1H -2",
-
-        "1H -1",
-
-        "1H Last"
-
-      );
-
-    }
-
-  }
-
-
-  resultsHeadRow.innerHTML =
-    headers
-      .map(
-        (header) =>
-          `<th>${header}</th>`
-      )
-      .join("");
-
-}
-
-
-/* =========================================================
-   FORMAT VOLUME
-========================================================= */
-
-function formatVolume(
-  value
-) {
-
-  if (
-    !Number.isFinite(value)
-  ) {
-
-    return "—";
-
-  }
-
-
-  if (
-    value >=
-    1_000_000_000
-  ) {
-
-    return `$${(
-      value /
-      1_000_000_000
-    ).toFixed(2)}B`;
-
-  }
-
-
-  if (
-    value >=
-    1_000_000
-  ) {
-
-    return `$${(
-      value /
-      1_000_000
-    ).toFixed(2)}M`;
-
-  }
-
-
-  if (
-    value >=
-    1_000
-  ) {
-
-    return `$${(
-      value /
-      1_000
-    ).toFixed(2)}K`;
-
-  }
-
-
-  return `$${value.toFixed(0)}`;
-
-}
-
-
-/* =========================================================
-   FORMAT PERCENT
-========================================================= */
-
-function formatPercent(
-  value
-) {
-
-  if (
-    !Number.isFinite(value)
-  ) {
-
-    return "—";
-
-  }
-
-
-  const prefix =
-    value > 0
-      ? "+"
-      : "";
-
-
-  return (
-    `${prefix}${value.toFixed(2)}%`
-  );
-
-}
-
-
-/* =========================================================
-   HOURLY CELL
-========================================================= */
-
-function renderHourlyCell(
-  candle
-) {
-
-  if (!candle) {
-
-    return `
-      <td class="muted">
-        —
-      </td>
-    `;
-
-  }
-
-
-  const className =
-    candle.green
-      ? "green"
-      : candle.red
-        ? "red"
-        : "muted";
-
-
-  const emoji =
-    candle.green
-      ? "🟢"
-      : candle.red
-        ? "🔴"
-        : "⚪";
-
-
-  return `
-    <td class="${className}">
-      <span class="candle">
-        ${emoji}
-        ${formatPercent(
-          candle.percent
-        )}
-      </span>
-    </td>
-  `;
-
-}
-
-
-/* =========================================================
-   RENDER RESULTS
-========================================================= */
-
-function renderResults(
-  results,
-  settings
-) {
-
-  /*
-   * Always regenerate headers first.
-   */
-
-  renderTableHeader(
-    settings
-  );
-
-
-  resultCount.textContent =
-    results.length;
-
-
-  if (
-    results.length === 0
-  ) {
-
-    const columnCount =
-      3 +
-      (
-        settings.hourlyEnabled
-          ? settings.patternLength
-          : 0
-      );
-
-
-    resultsBody.innerHTML = `
-      <tr>
-        <td
-          colspan="${columnCount}"
-          class="empty"
-        >
-          No matching pairs found.
-        </td>
-      </tr>
-    `;
-
-
-    return;
-
-  }
-
-
-  resultsBody.innerHTML =
-    results
-      .map(
-        (candidate) => {
-
-          /*
-           * If 1D is OFF:
-           * show dash instead of fake data.
-           */
-
-          const dailyHtml =
-            candidate.daily
-              ? `
-                <td class="green">
-                  ${formatPercent(
-                    candidate.daily.percent
-                  )}
-                </td>
-              `
-              : `
-                <td class="muted">
-                  —
-                </td>
-              `;
-
-
-          /*
-           * IMPORTANT:
-           *
-           * If 1H is OFF, this remains
-           * an EMPTY STRING.
-           *
-           * No 1H columns.
-           */
-
-          let hourlyHtml = "";
-
-
-          if (
-            settings.hourlyEnabled
-          ) {
-
-            const candles =
-              candidate.hourly?.candles ||
-              [];
-
-
-            hourlyHtml =
-              candles
-                .map(
-                  renderHourlyCell
-                )
-                .join("");
-
-          }
-
-
-          return `
-            <tr>
-
-              <td class="symbol">
-                ${escapeHtml(
-                  candidate.symbol
-                )}
-              </td>
-
-
-              <td class="volume">
-                ${formatVolume(
-                  candidate.quoteVolume
-                )}
-              </td>
-
-
-              ${dailyHtml}
-
-
-              ${hourlyHtml}
-
-            </tr>
-          `;
-
-        }
-      )
-      .join("");
-
-}
-
-
-/* =========================================================
-   HTML ESCAPE
-========================================================= */
-
-function escapeHtml(
-  value
-) {
-
-  return String(value)
-
-    .replaceAll(
-      "&",
-      "&amp;"
-    )
-
-    .replaceAll(
-      "<",
-      "&lt;"
-    )
-
-    .replaceAll(
-      ">",
-      "&gt;"
-    )
-
-    .replaceAll(
-      '"',
-      "&quot;"
-    )
-
-    .replaceAll(
-      "'",
-      "&#039;"
-    );
-
-}
-
-
-/* =========================================================
-   CSV ESCAPE
-========================================================= */
-
-function csvEscape(
-  value
-) {
-
-  const stringValue =
-    String(
-      value ?? ""
-    );
-
-
-  return `"${stringValue.replaceAll(
-    '"',
-    '""'
-  )}"`;
-
-}
-
-
-/* =========================================================
-   EXPORT CSV
-========================================================= */
-
-function exportCSV() {
-
-  if (
-    !lastResults.length ||
-    !lastSettings
-  ) {
-
-    return;
-
-  }
-
-
-  const settings =
-    lastSettings;
-
-
-  const headers = [
-
-    "Symbol",
-
-    "24H Quote Volume",
-
-    "1D %"
-
-  ];
-
-
-  /*
-   * Add hourly CSV columns ONLY
-   * when hourly checking is ON.
-   */
-
-  if (
-    settings.hourlyEnabled
-  ) {
-
-    if (
-      settings.patternLength === 3
-    ) {
-
-      headers.push(
-
-        "1H -2 %",
-
-        "1H -1 %",
-
-        "1H Last %"
-
-      );
-
-    } else {
-
-      headers.push(
-
-        "1H -3 %",
-
-        "1H -2 %",
-
-        "1H -1 %",
-
-        "1H Last %"
-
-      );
-
-    }
-
-  }
-
-
-  const rows = [
-
-    headers,
-
-    ...lastResults.map(
-      (candidate) => {
-
-        const row = [
-
-          candidate.symbol,
-
-          candidate.quoteVolume,
-
-          candidate.daily
-            ? candidate.daily.percent
-            : ""
-
-        ];
-
-
-        /*
-         * Only add hourly CSV values
-         * when hourly is enabled.
-         */
-
-        if (
-          settings.hourlyEnabled
-        ) {
-
-          const candles =
-            candidate.hourly?.candles ||
-            [];
-
-
-          candles.forEach(
-            (candle) => {
-
-              row.push(
-                candle
-                  ? candle.percent
-                  : ""
-              );
-
-            }
-          );
-
-        }
-
-
-        return row;
-
-      }
-    )
-
-  ];
-
-
-  const csv =
-    rows
-      .map(
-        (row) =>
-          row
-            .map(csvEscape)
-            .join(",")
-      )
-      .join("\n");
-
-
-  const blob =
-    new Blob(
-      [csv],
-      {
-        type:
-          "text/csv;charset=utf-8;"
       }
     );
 
-
-  const url =
-    URL.createObjectURL(
-      blob
-    );
-
-
-  const link =
-    document.createElement(
-      "a"
-    );
-
-
-  link.href =
-    url;
-
-
-  link.download =
-    `binance-momentum-scanner-v${VERSION}.csv`;
-
-
-  document.body.appendChild(
-    link
-  );
-
-
-  link.click();
-
-
-  link.remove();
-
-
-  URL.revokeObjectURL(
-    url
-  );
-
+  return analyzed;
 }
 
 
 /* =========================================================
-   MAIN SCAN
+   START SCAN
 ========================================================= */
 
 async function startScan() {
 
-  if (
-    abortController
-  ) {
-
+  if (isScanning) {
     return;
-
   }
-
-
-  let settings;
-
-
-  try {
-
-    settings =
-      getSettings();
-
-  } catch (error) {
-
-    setStatus(
-      "error",
-      "Invalid settings",
-      error.message
-    );
-
-    return;
-
-  }
-
-
-  abortController =
-    new AbortController();
-
-
-  lastResults = [];
-
-  lastSettings =
-    settings;
-
-
-  exportBtn.disabled =
-    true;
-
-
-  statSymbols.textContent =
-    "—";
-
-  statSpot.textContent =
-    "—";
-
-  statCandidates.textContent =
-    "—";
-
-  statMatches.textContent =
-    "—";
-
-
-  resultCount.textContent =
-    "0";
-
 
   /*
-   * Build correct table BEFORE scan.
+   * Validate settings.
    */
 
-  renderTableHeader(
-    settings
-  );
+  const volumeMinimum =
+    Number(volumeMin.value);
 
+  const dailyMinimum =
+    Number(dailyMin.value);
 
-  const columnCount =
-    3 +
+  const hourlyMinimum =
+    Number(hourlyMin.value);
+
+  const max =
+    Number(maxResults.value);
+
+  if (
+    !Number.isFinite(volumeMinimum) ||
+    volumeMinimum < 0
+  ) {
+
+    alert("Please enter a valid minimum volume.");
+    return;
+  }
+
+  if (
+    enableDaily.checked &&
     (
-      settings.hourlyEnabled
-        ? settings.patternLength
-        : 0
-    );
+      !Number.isFinite(dailyMinimum) ||
+      dailyMinimum < 0
+    )
+  ) {
 
+    alert("Please enter a valid minimum 24H change.");
+    return;
+  }
+
+  if (
+    enableHourly.checked &&
+    patternCandle1.value !== "red" &&
+    (
+      !Number.isFinite(hourlyMinimum) ||
+      hourlyMinimum < 0
+    )
+  ) {
+
+    alert("Please enter a valid minimum 1H percentage.");
+    return;
+  }
+
+  if (
+    !Number.isFinite(max) ||
+    max < 1
+  ) {
+
+    alert("Please enter a valid maximum result count.");
+    return;
+  }
+
+  isScanning = true;
+  stopRequested = false;
+
+  scanResults = [];
+
+  startBtn.disabled = true;
+  stopBtn.disabled = false;
+  exportBtn.disabled = true;
+
+  setStatus("Scanning", "running");
+
+  setProgress(0);
+
+  totalPairsEl.textContent = "0";
+  volumeCandidatesEl.textContent = "0";
+  matchedCountEl.textContent = "0";
+  resultCountEl.textContent = "0 Results";
 
   resultsBody.innerHTML = `
-    <tr>
-      <td
-        colspan="${columnCount}"
-        class="empty"
-      >
+    <tr class="empty-row">
+      <td colspan="8">
         Scanning...
       </td>
     </tr>
   `;
 
+  scanStartTime = Date.now();
 
-  setProgress(
-    0,
-    0
+  clearInterval(elapsedTimer);
+
+  elapsedTimer = setInterval(
+    updateElapsedTime,
+    500
   );
-
-
-  setRunning(
-    true
-  );
-
 
   try {
 
-    /*
-     * =====================================================
-     * CONDITIONS
-     * =====================================================
-     */
-
-    const conditionText = [];
-
-
-    conditionText.push(
-      settings.dailyEnabled
-        ? `1D ≥ ${settings.dailyMin}%`
-        : "1D OFF"
+    setScanStatus(
+      "Loading Binance Spot exchange information..."
     );
 
+    const symbols =
+      await getSpotSymbols();
 
-    if (
-      settings.hourlyEnabled
-    ) {
-
-      conditionText.push(
-        settings.patternLength === 3
-          ? "1H RED → RED → GREEN"
-          : "1H RED → RED → RED → GREEN"
-      );
-
-    } else {
-
-      conditionText.push(
-        "1H OFF"
-      );
-
+    if (stopRequested) {
+      finishScan(true);
+      return;
     }
 
+    totalPairsEl.textContent =
+      formatNumber(symbols.length);
 
-    /*
-     * =====================================================
-     * STEP 1
-     * EXCHANGE INFO
-     * =====================================================
-     */
-
-    setStatus(
-      "running",
-      "Loading Binance symbols",
-      "Verifying Binance Spot USDT pairs."
+    setScanStatus(
+      `Found ${symbols.length} verified Spot USDT pairs. Loading 24H data...`
     );
-
-
-    const {
-      allSymbols,
-      spotSymbols
-    } =
-      await getSpotSymbols(
-        abortController.signal
-      );
-
-
-    statSymbols.textContent =
-      allSymbols.length
-        .toLocaleString();
-
-
-    statSpot.textContent =
-      spotSymbols.length
-        .toLocaleString();
-
-
-    /*
-     * =====================================================
-     * STEP 2
-     * 24H TICKERS
-     * =====================================================
-     */
-
-    setStatus(
-      "running",
-      "Loading 24H market data",
-      "Fetching Binance 24H ticker data."
-    );
-
 
     const tickers =
-      await getAll24hTickers(
-        abortController.signal
-      );
+      await getAll24hTickers();
 
+    if (stopRequested) {
+      finishScan(true);
+      return;
+    }
 
-    const tickerMap =
-      new Map();
-
-
-    tickers.forEach(
-      (ticker) => {
-
-        if (
-          ticker &&
-          ticker.symbol
-        ) {
-
-          tickerMap.set(
-            ticker.symbol,
-            ticker
-          );
-
-        }
-
-      }
-    );
-
-
-    /*
-     * =====================================================
-     * STEP 3
-     * VOLUME FILTER
-     * =====================================================
-     */
-
-    setStatus(
-      "running",
-      "Filtering by 24H volume",
-      `Minimum volume: $${settings.volumeMin}M`
-    );
-
-
-    const volumeCandidates =
+    const candidates =
       buildVolumeCandidates(
-        spotSymbols,
-        tickerMap,
-        settings.volumeMin
+        symbols,
+        tickers
       );
 
+    volumeCandidatesEl.textContent =
+      formatNumber(candidates.length);
 
     /*
-     * =====================================================
-     * STEP 4
-     * OPTIONAL 1D
-     * =====================================================
-     *
-     * If OFF:
-     * scanDailyCandidates() immediately returns.
-     *
-     * NO 1D REQUEST.
+     * First stage: 24H volume.
      */
 
-    setProgress(
-      0,
-      settings.dailyEnabled
-        ? volumeCandidates.length
-        : 1
-    );
+    if (candidates.length === 0) {
 
+      scanResults = [];
 
-    const dailyCandidates =
+      renderResults();
+
+      setScanStatus(
+        "No pairs passed the minimum 24H volume condition."
+      );
+
+      finishScan(false);
+      return;
+    }
+
+    /*
+     * Second stage: optional 1D.
+     */
+
+    let dailyCandidates =
       await scanDailyCandidates(
-        volumeCandidates,
-        settings,
-        abortController.signal
+        candidates
       );
 
-
-    if (
-      abortController.signal.aborted
-    ) {
-
-      throw new DOMException(
-        "Scan stopped",
-        "AbortError"
-      );
-
+    if (stopRequested) {
+      finishScan(true);
+      return;
     }
 
-
-    statCandidates.textContent =
-      dailyCandidates.length
-        .toLocaleString();
-
-
     /*
-     * =====================================================
-     * STEP 5
-     * OPTIONAL 1H
-     * =====================================================
-     *
-     * If OFF:
-     * scanHourlyCandidates() immediately returns.
-     *
-     * NO 1H REQUEST.
-     * NO PATTERN MATCHING.
+     * Third stage: optional 1H.
      */
 
-    const finalResults =
+    let finalCandidates =
       await scanHourlyCandidates(
-        dailyCandidates,
-        settings,
-        abortController.signal
+        dailyCandidates
       );
 
-
-    if (
-      abortController.signal.aborted
-    ) {
-
-      throw new DOMException(
-        "Scan stopped",
-        "AbortError"
-      );
-
+    if (stopRequested) {
+      finishScan(true);
+      return;
     }
 
-
     /*
-     * =====================================================
-     * STEP 6
-     * SORT
-     * =====================================================
+     * Sort.
      *
      * 1D ON:
-     *     Sort by daily % descending.
+     *   Daily percentage descending.
      *
      * 1D OFF:
-     *     Sort by 24H volume descending.
+     *   24H quote volume descending.
      */
 
-    if (
-      settings.dailyEnabled
-    ) {
+    if (enableDaily.checked) {
 
-      finalResults.sort(
-        (a, b) => {
-
-          return (
-            (b.daily?.percent ??
-              -Infinity) -
-            (a.daily?.percent ??
-              -Infinity)
-          );
-
-        }
+      finalCandidates.sort(
+        (a, b) =>
+          (b.dailyChange ?? b.priceChangePercent ?? 0) -
+          (a.dailyChange ?? a.priceChangePercent ?? 0)
       );
 
     } else {
 
-      finalResults.sort(
-        (a, b) => {
-
-          return (
-            b.quoteVolume -
-            a.quoteVolume
-          );
-
-        }
+      finalCandidates.sort(
+        (a, b) =>
+          b.quoteVolume - a.quoteVolume
       );
-
     }
 
+    scanResults =
+      finalCandidates.slice(0, max);
 
-    /*
-     * =====================================================
-     * STEP 7
-     * LIMIT RESULTS
-     * =====================================================
-     */
+    matchedCountEl.textContent =
+      formatNumber(finalCandidates.length);
 
-    const limitedResults =
-      finalResults.slice(
-        0,
-        settings.maxResults
-      );
+    renderResults();
 
+    setProgress(100);
 
-    lastResults =
-      limitedResults;
-
-
-    /*
-     * =====================================================
-     * STATS
-     * =====================================================
-     */
-
-    statMatches.textContent =
-      limitedResults.length
-        .toLocaleString();
-
-
-    /*
-     * =====================================================
-     * DESCRIPTION
-     * =====================================================
-     */
-
-    let description = "";
-
-
-    if (
-      settings.dailyEnabled &&
-      settings.hourlyEnabled
-    ) {
-
-      description =
-        `1D ≥ ${settings.dailyMin}% • ` +
-        `Volume ≥ $${settings.volumeMin}M • ` +
-        (
-          settings.patternLength === 3
-            ? "1H RED → RED → GREEN"
-            : "1H RED → RED → RED → GREEN"
-        );
-
-    } else if (
-      settings.dailyEnabled &&
-      !settings.hourlyEnabled
-    ) {
-
-      description =
-        `1D ≥ ${settings.dailyMin}% • ` +
-        `Volume ≥ $${settings.volumeMin}M • ` +
-        `1H OFF`;
-
-    } else if (
-      !settings.dailyEnabled &&
-      settings.hourlyEnabled
-    ) {
-
-      description =
-        `Volume ≥ $${settings.volumeMin}M • ` +
-        (
-          settings.patternLength === 3
-            ? "1H RED → RED → GREEN"
-            : "1H RED → RED → RED → GREEN"
-        ) +
-        ` • 1D OFF`;
-
-    } else {
-
-      description =
-        `Volume ≥ $${settings.volumeMin}M • ` +
-        `1D OFF • 1H OFF`;
-
-    }
-
-
-    resultsDescription.textContent =
-      `${limitedResults.length} result(s) • ${description}`;
-
-
-    /*
-     * =====================================================
-     * RENDER
-     * =====================================================
-     */
-
-    renderResults(
-      limitedResults,
-      settings
+    setScanStatus(
+      `Scan complete. ${scanResults.length} result${scanResults.length === 1 ? "" : "s"} found.`
     );
 
+    setStatus("Complete", "success");
 
-    setProgress(
-      1,
-      1
-    );
-
-
-    setStatus(
-      "success",
-      "Scanning complete",
-      `${limitedResults.length} matching pair(s) found.`
-    );
-
+    resultCountEl.textContent =
+      `${scanResults.length} Result${scanResults.length === 1 ? "" : "s"}`;
 
     exportBtn.disabled =
-      limitedResults.length === 0;
-
+      scanResults.length === 0;
 
   } catch (error) {
 
-    if (
-      error.name ===
-      "AbortError"
-    ) {
+    console.error(error);
 
-      setStatus(
-        "stopped",
-        "Scan stopped",
-        "The scan was stopped by the user."
-      );
+    setStatus("Error", "error");
 
-
-      return;
-
-    }
-
-
-    console.error(
-      "Scanner error:",
-      error
+    setScanStatus(
+      `Scan failed: ${error.message}`
     );
 
-
-    setStatus(
-      "error",
-      "Scan failed",
-      error.message ||
-        "An unexpected error occurred."
-    );
-
+    resultsBody.innerHTML = `
+      <tr class="empty-row">
+        <td colspan="8">
+          Scan failed. Check your internet connection and Binance API availability.
+        </td>
+      </tr>
+    `;
 
   } finally {
 
-    abortController =
-      null;
-
-
-    setRunning(
-      false
-    );
-
-
-    updateConditionControls();
-
+    if (isScanning) {
+      finishScan(false);
+    }
   }
-
 }
 
 
@@ -2751,74 +1164,404 @@ async function startScan() {
 
 function stopScan() {
 
-  if (
-    !abortController
-  ) {
-
+  if (!isScanning) {
     return;
-
   }
 
+  stopRequested = true;
 
-  abortController.abort();
-
-
-  setStatus(
-    "stopped",
-    "Stopping scan",
-    "Cancelling active Binance requests..."
+  setScanStatus(
+    "Stopping scan..."
   );
 
+  stopBtn.disabled = true;
 }
 
 
 /* =========================================================
-   EVENTS
+   FINISH
 ========================================================= */
 
-enableDaily.addEventListener(
-  "change",
-  updateConditionControls
-);
+function finishScan(wasStopped) {
 
+  isScanning = false;
 
-enableHourly.addEventListener(
-  "change",
-  updateConditionControls
-);
+  clearInterval(elapsedTimer);
+  elapsedTimer = null;
 
+  startBtn.disabled = false;
+  stopBtn.disabled = true;
 
-patternLengthInput.addEventListener(
-  "change",
-  updateConditionControls
-);
+  if (wasStopped) {
 
+    setStatus("Stopped", "idle");
 
-scanBtn.addEventListener(
-  "click",
-  startScan
-);
+    setScanStatus(
+      "Scan stopped by user."
+    );
+  }
 
-
-stopBtn.addEventListener(
-  "click",
-  stopScan
-);
-
-
-exportBtn.addEventListener(
-  "click",
-  exportCSV
-);
+  updateElapsedTime();
+}
 
 
 /* =========================================================
-   INITIALIZE
+   ELAPSED
 ========================================================= */
 
-updateConditionControls();
+function updateElapsedTime() {
 
-setProgress(
-  0,
-  0
-);
+  if (!scanStartTime) {
+    elapsedTimeEl.textContent = "0s";
+    return;
+  }
+
+  const seconds =
+    Math.floor(
+      (Date.now() - scanStartTime) / 1000
+    );
+
+  elapsedTimeEl.textContent =
+    formatElapsed(seconds);
+}
+
+
+/* =========================================================
+   TABLE HEADER
+========================================================= */
+
+function updateTableHeader() {
+
+  let html = `
+    <tr>
+      <th>#</th>
+      <th>Symbol</th>
+  `;
+
+  if (enableDaily.checked) {
+
+    html += `
+      <th>1D %</th>
+    `;
+
+  } else {
+
+    html += `
+      <th>24H %</th>
+    `;
+  }
+
+  html += `
+      <th>24H Volume</th>
+  `;
+
+  if (enableHourly.checked) {
+
+    html += `
+      <th>1H -4</th>
+      <th>1H -3</th>
+      <th>1H -2</th>
+      <th>1H Last</th>
+    `;
+  }
+
+  html += `
+    </tr>
+  `;
+
+  resultsHead.innerHTML = html;
+}
+
+
+/* =========================================================
+   RESULT TABLE
+========================================================= */
+
+function renderResults() {
+
+  updateTableHeader();
+
+  if (!scanResults.length) {
+
+    const columns =
+      enableHourly.checked ? 8 : 4;
+
+    resultsBody.innerHTML = `
+      <tr class="empty-row">
+        <td colspan="${columns}">
+          No matching pairs found.
+        </td>
+      </tr>
+    `;
+
+    resultsDescription.textContent =
+      buildResultsDescription();
+
+    return;
+  }
+
+  resultsBody.innerHTML =
+    scanResults
+      .map((result, index) => {
+
+        const dailyValue =
+          enableDaily.checked
+            ? result.dailyChange
+            : result.priceChangePercent;
+
+        const dailyClass =
+          dailyValue >= 0
+            ? "green"
+            : "red";
+
+        let hourlyHTML = "";
+
+        if (
+          enableHourly.checked &&
+          result.hourly
+        ) {
+
+          hourlyHTML =
+            result.hourly.candles
+              .map((candle) => {
+
+                const isGreen =
+                  candle.green;
+
+                const icon =
+                  isGreen
+                    ? "🟢"
+                    : "🔴";
+
+                const cssClass =
+                  isGreen
+                    ? "green"
+                    : "red";
+
+                return `
+                  <td class="${cssClass}">
+                    ${icon} ${formatPercent(candle.change)}
+                  </td>
+                `;
+              })
+              .join("");
+        }
+
+        return `
+          <tr>
+
+            <td>${index + 1}</td>
+
+            <td class="symbol">
+              ${escapeHTML(result.symbol)}
+            </td>
+
+            <td class="${dailyClass}">
+              ${formatPercent(dailyValue)}
+            </td>
+
+            <td class="volume">
+              ${formatVolume(result.quoteVolume)}
+            </td>
+
+            ${hourlyHTML}
+
+          </tr>
+        `;
+
+      })
+      .join("");
+
+  resultsDescription.textContent =
+    buildResultsDescription();
+}
+
+
+function buildResultsDescription() {
+
+  const parts = [];
+
+  if (enableDaily.checked) {
+
+    parts.push(
+      `1D 🟢 ≥ ${Number(dailyMin.value).toFixed(1)}%`
+    );
+
+  } else {
+
+    parts.push(
+      "1D disabled"
+    );
+  }
+
+  parts.push(
+    `Volume ≥ ${formatVolume(Number(volumeMin.value))}`
+  );
+
+  if (enableHourly.checked) {
+
+    const pattern =
+      getSelectedPattern()
+        .map((value) => {
+
+          if (value === "red") {
+            return "🔴";
+          }
+
+          if (value === "green") {
+            return "🟢";
+          }
+
+          return "⚪";
+        })
+        .join(" → ");
+
+    parts.push(
+      `1H ${pattern}`
+    );
+
+  } else {
+
+    parts.push(
+      "1H disabled"
+    );
+  }
+
+  return parts.join(" • ");
+}
+
+
+/* =========================================================
+   CSV
+========================================================= */
+
+function csvEscape(value) {
+
+  const text =
+    String(value ?? "");
+
+  if (
+    text.includes(",") ||
+    text.includes('"') ||
+    text.includes("\n")
+  ) {
+
+    return `"${text.replaceAll('"', '""')}"`;
+  }
+
+  return text;
+}
+
+
+function exportCSV() {
+
+  if (!scanResults.length) {
+    return;
+  }
+
+  const rows = [];
+
+  const header = [
+    "Rank",
+    "Symbol",
+    enableDaily.checked
+      ? "1D Change %"
+      : "24H Change %",
+    "24H Quote Volume"
+  ];
+
+  if (enableHourly.checked) {
+
+    header.push(
+      "1H -4",
+      "1H -3",
+      "1H -2",
+      "1H Last"
+    );
+  }
+
+  rows.push(header);
+
+  scanResults.forEach(
+    (result, index) => {
+
+      const dailyValue =
+        enableDaily.checked
+          ? result.dailyChange
+          : result.priceChangePercent;
+
+      const row = [
+        index + 1,
+        result.symbol,
+        Number(dailyValue).toFixed(4),
+        Number(result.quoteVolume).toFixed(2)
+      ];
+
+      if (
+        enableHourly.checked &&
+        result.hourly
+      ) {
+
+        result.hourly.candles.forEach(
+          (candle) => {
+
+            row.push(
+              Number(candle.change).toFixed(4)
+            );
+          }
+        );
+      }
+
+      rows.push(row);
+    }
+  );
+
+  const csv =
+    rows
+      .map(
+        (row) =>
+          row.map(csvEscape).join(",")
+      )
+      .join("\n");
+
+  const blob =
+    new Blob(
+      [csv],
+      {
+        type: "text/csv;charset=utf-8;"
+      }
+    );
+
+  const url =
+    URL.createObjectURL(blob);
+
+  const link =
+    document.createElement("a");
+
+  link.href = url;
+
+  const timestamp =
+    new Date()
+      .toISOString()
+      .replaceAll(":", "-")
+      .replaceAll(".", "-");
+
+  link.download =
+    `binance-momentum-scan-${timestamp}.csv`;
+
+  document.body.appendChild(link);
+
+  link.click();
+
+  link.remove();
+
+  URL.revokeObjectURL(url);
+}
+
+
+/* =========================================================
+   FINAL INITIAL UI
+========================================================= */
+
+updateTableHeader();
+updatePatternPreview();
