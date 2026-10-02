@@ -1,11 +1,18 @@
+/* Binance Spot USDT Momentum Scanner v1.0.1 */
 "use strict";
 
-const API_BASE="https://api.binance.com";
-const ENDPOINTS={
-  exchangeInfo:`${API_BASE}/api/v3/exchangeInfo`,
-  ticker24h:`${API_BASE}/api/v3/ticker/24hr`,
-  klines:`${API_BASE}/api/v3/klines`
+const API_BASES=[
+  "https://data-api.binance.vision",
+  "https://api.binance.com",
+  "https://api-gcp.binance.com",
+  "https://api1.binance.com"
+];
+const API_PATHS={
+  exchangeInfo:"/api/v3/exchangeInfo",
+  ticker24h:"/api/v3/ticker/24hr",
+  klines:"/api/v3/klines"
 };
+let activeApiBase=null;
 const CONCURRENCY=7;
 let isScanning=false,abortController=null,lastResults=[];
 
@@ -23,8 +30,31 @@ function setProgress(p,text){progressBar.style.width=`${Math.min(Math.max(p,0),1
 function resetStats(){statSymbols.textContent="—";statSpot.textContent="—";statDaily.textContent="—";statMatches.textContent="—"}
 function checkStopped(){if(abortController?.signal.aborted)throw new DOMException("Scan stopped","AbortError")}
 
-async function fetchJson(url,options={}){const r=await fetch(url,{...options,headers:{Accept:"application/json",...(options.headers||{})}});if(!r.ok){let m=`HTTP ${r.status}`;try{const e=await r.json();if(e?.msg)m+=`: ${e.msg}`}catch(_){}throw new Error(m)}return r.json()}
+async function fetchJson(url,options={}){
+  const r=await fetch(url,{...options,headers:{Accept:"application/json",...(options.headers||{})}});
+  if(!r.ok){
+    let m=`HTTP ${r.status}`;
+    try{const e=await r.json();if(e?.msg)m+=`: ${e.msg}`}catch(_){}
+    throw new Error(m)
+  }
+  return r.json()
+}
 
+async function fetchPublic(path,params="",signal){
+  const bases=activeApiBase?[activeApiBase,...API_BASES.filter(b=>b!==activeApiBase)]:API_BASES;
+  let lastError=null;
+  for(const base of bases){
+    try{
+      const result=await fetchJson(`${base}${path}${params}`,{signal});
+      activeApiBase=base;
+      return result;
+    }catch(e){
+      if(e?.name==="AbortError")throw e;
+      lastError=e;
+    }
+  }
+  throw new Error(`Binance public API unavailable. Last error: ${lastError?.message||"Unknown error"}`);
+}
 function containsSpotPermission(v){if(!v)return false;if(typeof v==="string")return v.toUpperCase()==="SPOT";if(Array.isArray(v))return v.some(containsSpotPermission);return false}
 
 function isVerifiedSpotSymbol(s){
@@ -36,21 +66,44 @@ function isVerifiedSpotSymbol(s){
 }
 
 async function getSpotSymbols(){
-  const data=await fetchJson(ENDPOINTS.exchangeInfo);
-  if(!Array.isArray(data?.symbols))throw new Error("Binance exchangeInfo returned no symbols.");
-  return{allSymbols:data.symbols,spotUsdtSymbols:data.symbols.filter(isVerifiedSpotSymbol)}
-}
+  /*
+   * Binance supports permission filtering directly on exchangeInfo.
+   * This keeps futures/perpetual/margin-only markets out before
+   * candle scanning begins. Each symbol is still positively checked.
+   */
+  const query="?permissions=SPOT&symbolStatus=TRADING&showPermissionSets=true";
+  const data=await fetchPublic(API_PATHS.exchangeInfo,query,abortController?.signal);
 
+  if(!Array.isArray(data?.symbols)){
+    throw new Error("Binance exchangeInfo returned no symbols.");
+  }
+
+  const allSymbols=data.symbols;
+
+  if(allSymbols.length===0){
+    throw new Error("Binance returned zero symbols for permissions=SPOT and symbolStatus=TRADING.");
+  }
+
+  const spotUsdtSymbols=allSymbols.filter(isVerifiedSpotSymbol);
+
+  if(spotUsdtSymbols.length===0){
+    throw new Error("Binance returned Spot symbols, but none could be positively verified as Spot USDT pairs.");
+  }
+
+  return{allSymbols,spotUsdtSymbols}
+}
 async function getAll24hTickers(){
-  const data=await fetchJson(ENDPOINTS.ticker24h);
+  const data=await fetchPublic(API_PATHS.ticker24h,"",abortController?.signal);
   if(!Array.isArray(data))throw new Error("Binance 24H ticker response was invalid.");
   return data
 }
-
 async function getKlines(symbol,interval,limit,signal){
-  return fetchJson(`${ENDPOINTS.klines}?symbol=${encodeURIComponent(symbol)}&interval=${interval}&limit=${limit}`,{signal})
+  return fetchPublic(
+    API_PATHS.klines,
+    `?symbol=${encodeURIComponent(symbol)}&interval=${interval}&limit=${limit}`,
+    signal
+  )
 }
-
 function analyzeCandle(k){
   if(!Array.isArray(k)||k.length<5)return null;
   const open=Number(k[1]),close=Number(k[4]);
@@ -159,9 +212,18 @@ async function startScan(){
     checkStopped();
     statSymbols.textContent=formatNumber(spotData.allSymbols.length);
     statSpot.textContent=formatNumber(spotData.spotUsdtSymbols.length);
+    setStatus("running","Spot markets loaded",`${spotData.spotUsdtSymbols.length} verified Spot USDT pairs. Scanning daily candles now...`);
     const tickerMap=new Map(tickers.filter(t=>t?.symbol).map(t=>[t.symbol,t]));
     const daily=await scanDailyCandidates(spotData.spotUsdtSymbols,tickerMap,settings.dailyMin,settings.volumeMin);
     checkStopped();statDaily.textContent=formatNumber(daily.length);
+    if(daily.length===0){
+      setProgress(100,"Daily scan complete • 0 candidates passed the configured daily + volume filters.");
+      lastResults=[];
+      statMatches.textContent="0";
+      renderResults([]);
+      setStatus("done","Scan complete","All verified Spot USDT pairs were checked. No daily candidates matched the current settings.");
+      return;
+    }
     const allMatches=await scanHourlyCandidates(daily,settings.hourlyMin);
     checkStopped();
     lastResults=allMatches.slice(0,settings.maxResults);statMatches.textContent=formatNumber(lastResults.length);renderResults(lastResults);
