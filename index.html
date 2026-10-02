@@ -1,492 +1,288 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta
-    name="viewport"
-    content="width=device-width, initial-scale=1.0"
-  >
-
-  <meta name="theme-color" content="#080b12">
-
-  <title>Binance Momentum Scanner v1.0.4</title>
-
-  <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Binance Spot USDT Momentum Scanner</title>
+  <link rel="stylesheet" href="style.css" />
 </head>
 
 <body>
+  <div class="app">
 
-  <main class="container">
-
-    <!-- HERO -->
-    <section class="hero">
-
-      <div class="eyebrow">
-        BINANCE • SPOT • USDT
+    <header class="topbar">
+      <div>
+        <h1>Binance Momentum Scanner</h1>
+        <p>Spot USDT • Completed 1H Candle Pattern Scanner</p>
       </div>
 
-      <div class="title-row">
+      <div class="version">v 1.0.5</div>
+    </header>
 
-        <div>
-          <h1>Momentum Scanner</h1>
+    <main>
 
-          <p>
-            Scan Binance Spot USDT pairs using 24H volume,
-            optional 1D momentum, and optional completed 1H
-            candle patterns.
-          </p>
-        </div>
-
-        <div class="version">
-          v 1.0.4
-        </div>
-
-      </div>
-
-    </section>
-
-
-    <!-- SETTINGS -->
-    <section class="card settings-card">
-
-      <div class="section-title">
-
-        <div>
+      <!-- SETTINGS -->
+      <section class="card settings-card">
+        <div class="section-title">
           <h2>Scanner Settings</h2>
-
-          <span>
-            Enable or disable individual market conditions.
-          </span>
+          <span id="connectionStatus" class="status idle">Ready</span>
         </div>
 
-      </div>
+        <div class="settings-grid">
 
-
-      <div class="settings-grid">
-
-        <!-- 1D TOGGLE -->
-        <div class="setting toggle-setting">
-
-          <label class="check-control">
-
-            <input
-              type="checkbox"
-              id="enableDaily"
-              checked
-            >
-
-            <span class="check-box"></span>
-
-            <span class="check-content">
-
-              <strong>
-                Enable 1D condition
-              </strong>
-
-              <small>
-                Current daily candle must be green
-                and meet the minimum percentage.
-              </small>
-
-            </span>
-
-          </label>
-
-        </div>
-
-
-        <!-- 1H TOGGLE -->
-        <div class="setting toggle-setting">
-
-          <label class="check-control">
-
-            <input
-              type="checkbox"
-              id="enableHourly"
-              checked
-            >
-
-            <span class="check-box"></span>
-
-            <span class="check-content">
-
-              <strong>
-                Enable 1H condition
-              </strong>
-
-              <small>
-                Check the selected completed-candle pattern.
-              </small>
-
-            </span>
-
-          </label>
-
-        </div>
-
-
-        <!-- DAILY MIN -->
-        <div
-          class="setting input-setting"
-          id="dailySetting"
-        >
-
-          <label for="dailyMin">
-            Minimum 1D %
-          </label>
-
-          <div class="input-wrap">
-
+          <div class="field">
+            <label for="dailyMin">Minimum 24H Change %</label>
             <input
               id="dailyMin"
               type="number"
-              value="20"
+              value="3"
               step="0.1"
               min="0"
-            >
-
-            <span>%</span>
-
+            />
           </div>
 
-        </div>
-
-
-        <!-- VOLUME -->
-        <div class="setting input-setting">
-
-          <label for="volumeMin">
-            Minimum 24H Quote Volume
-          </label>
-
-          <div class="input-wrap">
-
+          <div class="field">
+            <label for="volumeMin">Minimum 24H Quote Volume</label>
             <input
               id="volumeMin"
               type="number"
-              value="5"
-              step="0.1"
+              value="1000000"
+              step="100000"
               min="0"
-            >
-
-            <span>$M</span>
-
+            />
           </div>
 
-        </div>
-
-
-        <!-- HOURLY MIN -->
-        <div
-          class="setting input-setting"
-          id="hourlyMinSetting"
-        >
-
-          <label for="hourlyMin">
-            Minimum Last Green 1H %
-          </label>
-
-          <div class="input-wrap">
-
+          <div class="field">
+            <label for="hourlyMin">Minimum Last Green 1H %</label>
             <input
               id="hourlyMin"
               type="number"
-              value="0"
+              value="1"
               step="0.1"
-              min="-100"
-            >
-
-            <span>%</span>
-
+              min="0"
+            />
           </div>
 
-        </div>
-
-
-        <!-- PATTERN -->
-        <div
-          class="setting input-setting"
-          id="patternSetting"
-        >
-
-          <label for="patternLength">
-            1H Pattern
-          </label>
-
-          <select id="patternLength">
-
-            <option value="3">
-              3 Candles — 🔴 🔴 🟢
-            </option>
-
-            <option value="4">
-              4 Candles — 🔴 🔴 🔴 🟢
-            </option>
-
-          </select>
-
-        </div>
-
-
-        <!-- MAX RESULTS -->
-        <div class="setting input-setting">
-
-          <label for="maxResults">
-            Maximum Results
-          </label>
-
-          <div class="input-wrap">
-
+          <div class="field">
+            <label for="maxResults">Maximum Results</label>
             <input
               id="maxResults"
               type="number"
               value="50"
-              step="1"
               min="1"
               max="500"
-            >
-
+            />
           </div>
 
         </div>
 
-      </div>
+        <div class="toggles">
 
+          <label class="checkbox-row">
+            <input id="enableDaily" type="checkbox" checked />
+            <span class="checkmark"></span>
+            <span>
+              <strong>Enable 1D Condition</strong>
+              <small>Require daily candle and minimum 24H change</small>
+            </span>
+          </label>
 
-      <!-- ACTIONS -->
-      <div class="action-row">
+          <label class="checkbox-row">
+            <input id="enableHourly" type="checkbox" checked />
+            <span class="checkmark"></span>
+            <span>
+              <strong>Enable 1H Condition</strong>
+              <small>Match the last 4 completed 1H candles</small>
+            </span>
+          </label>
 
-        <button
-          id="scanBtn"
-          class="btn btn-primary"
-        >
-          <span>▶</span>
-          Scan
-        </button>
+        </div>
 
+        <!-- 1H PATTERN -->
+        <div id="hourlyPatternSection" class="pattern-section">
 
-        <button
-          id="stopBtn"
-          class="btn btn-danger"
-          disabled
-        >
-          <span>■</span>
-          Stop
-        </button>
+          <div class="pattern-heading">
+            <div>
+              <h3>1H Candle Pattern</h3>
+              <p>Select the required color for each of the latest 4 completed candles.</p>
+            </div>
 
-
-        <button
-          id="exportBtn"
-          class="btn btn-secondary"
-          disabled
-        >
-          <span>↓</span>
-          Export CSV
-        </button>
-
-      </div>
-
-    </section>
-
-
-    <!-- STATUS -->
-    <section class="card status-card">
-
-      <div class="status-top">
-
-        <div>
-
-          <div
-            class="status-title"
-            id="statusTitle"
-          >
-            Ready to scan
+            <div id="patternPreview" class="pattern-preview">
+              🔴 → 🔴 → 🔴 → 🟢
+            </div>
           </div>
 
-          <div
-            class="status-text"
-            id="statusText"
-          >
-            Configure your conditions and start the scanner.
+          <div class="pattern-grid">
+
+            <div class="pattern-item">
+              <span class="pattern-position">4th Last</span>
+              <span class="pattern-date">Oldest</span>
+
+              <select id="patternCandle4">
+                <option value="any">Any</option>
+                <option value="red" selected>🔴 Red</option>
+                <option value="green">🟢 Green</option>
+              </select>
+            </div>
+
+            <div class="pattern-arrow">→</div>
+
+            <div class="pattern-item">
+              <span class="pattern-position">3rd Last</span>
+              <span class="pattern-date">-3</span>
+
+              <select id="patternCandle3">
+                <option value="any">Any</option>
+                <option value="red" selected>🔴 Red</option>
+                <option value="green">🟢 Green</option>
+              </select>
+            </div>
+
+            <div class="pattern-arrow">→</div>
+
+            <div class="pattern-item">
+              <span class="pattern-position">2nd Last</span>
+              <span class="pattern-date">-2</span>
+
+              <select id="patternCandle2">
+                <option value="any">Any</option>
+                <option value="red" selected>🔴 Red</option>
+                <option value="green">🟢 Green</option>
+              </select>
+            </div>
+
+            <div class="pattern-arrow">→</div>
+
+            <div class="pattern-item">
+              <span class="pattern-position">Last</span>
+              <span class="pattern-date">Newest</span>
+
+              <select id="patternCandle1">
+                <option value="any">Any</option>
+                <option value="red">🔴 Red</option>
+                <option value="green" selected>🟢 Green</option>
+              </select>
+            </div>
+
+          </div>
+
+          <div id="hourlyMinNote" class="pattern-note">
+            Minimum Last Green 1H % is applied when the actual last candle is green.
           </div>
 
         </div>
 
+        <div class="actions">
+          <button id="startBtn" class="btn primary">
+            ▶ Start Scan
+          </button>
 
-        <div
-          class="status-badge idle"
-          id="statusBadge"
-        >
-          IDLE
+          <button id="stopBtn" class="btn danger" disabled>
+            ■ Stop
+          </button>
+
+          <button id="exportBtn" class="btn secondary" disabled>
+            ↓ Export CSV
+          </button>
         </div>
 
-      </div>
+      </section>
 
+      <!-- SCAN INFO -->
+      <section class="card scan-card">
 
-      <div class="progress-track">
+        <div class="scan-top">
+          <div>
+            <h2>Scan Progress</h2>
+            <p id="scanStatus">Ready to scan Binance Spot USDT pairs.</p>
+          </div>
 
-        <div
-          class="progress-bar"
-          id="progressBar"
-        ></div>
+          <div id="resultCount" class="result-count">
+            0 Results
+          </div>
+        </div>
 
-      </div>
+        <div class="progress-container">
+          <div id="progressBar" class="progress-bar"></div>
+        </div>
 
+        <div class="stats">
 
-      <div class="progress-info">
+          <div class="stat">
+            <span>Spot Pairs</span>
+            <strong id="totalPairs">0</strong>
+          </div>
 
-        <span id="progressText">
-          0%
-        </span>
+          <div class="stat">
+            <span>Volume Candidates</span>
+            <strong id="volumeCandidates">0</strong>
+          </div>
 
-        <span id="progressCount">
-          0 / 0
-        </span>
+          <div class="stat">
+            <span>Matched</span>
+            <strong id="matchedCount">0</strong>
+          </div>
 
-      </div>
-
-    </section>
-
-
-    <!-- STATS -->
-    <section class="stats-grid">
-
-      <div class="stat-card">
-
-        <span>
-          Binance Symbols
-        </span>
-
-        <strong id="statSymbols">
-          —
-        </strong>
-
-      </div>
-
-
-      <div class="stat-card">
-
-        <span>
-          Spot USDT Pairs
-        </span>
-
-        <strong id="statSpot">
-          —
-        </strong>
-
-      </div>
-
-
-      <div class="stat-card">
-
-        <span id="statCandidateLabel">
-          Daily Candidates
-        </span>
-
-        <strong id="statCandidates">
-          —
-        </strong>
-
-      </div>
-
-
-      <div class="stat-card">
-
-        <span id="statMatchLabel">
-          Exact Matches
-        </span>
-
-        <strong id="statMatches">
-          —
-        </strong>
-
-      </div>
-
-    </section>
-
-
-    <!-- RESULTS -->
-    <section class="card results-card">
-
-      <div class="results-header">
-
-        <div>
-
-          <h2>
-            Results
-          </h2>
-
-          <span id="resultsDescription">
-            No scan completed yet.
-          </span>
+          <div class="stat">
+            <span>Elapsed</span>
+            <strong id="elapsedTime">0s</strong>
+          </div>
 
         </div>
 
+      </section>
 
-        <div
-          class="result-count"
-          id="resultCount"
-        >
-          0
+      <!-- RESULTS -->
+      <section class="card results-card">
+
+        <div class="results-header">
+          <div>
+            <h2>Scanner Results</h2>
+            <p id="resultsDescription">
+              No scan completed yet.
+            </p>
+          </div>
         </div>
 
-      </div>
+        <div class="table-wrapper">
 
+          <table id="resultsTable">
 
-      <div class="table-wrap">
+            <thead id="resultsHead">
+              <tr>
+                <th>#</th>
+                <th>Symbol</th>
+                <th>24H %</th>
+                <th>24H Volume</th>
+                <th>1H -4</th>
+                <th>1H -3</th>
+                <th>1H -2</th>
+                <th>1H Last</th>
+              </tr>
+            </thead>
 
-        <table>
+            <tbody id="resultsBody">
+              <tr class="empty-row">
+                <td colspan="8">
+                  No results yet.
+                </td>
+              </tr>
+            </tbody>
 
-          <thead>
+          </table>
 
-            <tr id="resultsHeadRow">
-              <!-- Dynamic headers -->
-            </tr>
+        </div>
 
-          </thead>
+      </section>
 
+    </main>
 
-          <tbody id="resultsBody">
-
-            <tr>
-
-              <td
-                colspan="20"
-                class="empty"
-              >
-                Run a scan to see matching pairs.
-              </td>
-
-            </tr>
-
-          </tbody>
-
-        </table>
-
-      </div>
-
-    </section>
-
-
-    <!-- FOOTER -->
     <footer>
-
-      Binance Spot Momentum Scanner
-
-      <span>•</span>
-
-      v1.0.4
-
-      <span>•</span>
-
-      Public Binance API
-
+      Binance Spot Momentum Scanner • v 1.0.5
     </footer>
 
-  </main>
-
+  </div>
 
   <script src="app.js"></script>
-
 </body>
 </html>
