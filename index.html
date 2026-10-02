@@ -1,126 +1,256 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Binance Spot momentum scanner for a +20% daily candle and 1H red-red-green setup.">
-  <title>Binance Momentum Scanner</title>
+  <meta charset="UTF-8">
+
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1.0"
+  >
+
+  <title>Binance Spot Scanner</title>
+
   <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
-  <main class="app">
-    <header class="hero">
+
+<div class="container">
+
+  <header>
+    <div>
+      <div class="label">
+        BINANCE • SPOT • USDT
+      </div>
+
+      <h1>Momentum Scanner</h1>
+
+      <p>
+        Find Spot USDT coins with a green daily candle
+        of +20% or more followed by
+        🔴 🔴 🟢 on the latest completed 1H candles.
+      </p>
+    </div>
+
+    <div id="status" class="status">
+      Ready
+    </div>
+  </header>
+
+
+  <!-- SETTINGS -->
+
+  <section class="card">
+
+    <h2>Scanner Settings</h2>
+
+    <div class="settings">
+
       <div>
-        <div class="eyebrow">BINANCE • SPOT • USDT</div>
-        <h1>Momentum Scanner</h1>
-        <p class="subtitle">Find a <b>+20% daily move</b> with the latest completed 1H candles forming <b>🔴 → 🔴 → 🟢</b>.</p>
-      </div>
-      <div class="status-card">
-        <span id="statusDot" class="status-dot idle"></span>
-        <span id="statusText">Ready to scan</span>
-      </div>
-    </header>
+        <label>Daily minimum %</label>
 
-    <section class="controls panel">
-      <div class="control-grid">
-        <label>
-          <span>Daily minimum</span>
-          <div class="input-wrap"><input id="dailyMin" type="number" value="20" step="0.1" min="0"><b>%</b></div>
-        </label>
-        <label>
-          <span>Minimum 24H quote volume</span>
-          <div class="input-wrap"><input id="volumeMin" type="number" value="5000000" step="500000" min="0"><b>USDT</b></div>
-        </label>
-        <label>
-          <span>Minimum latest 1H green candle</span>
-          <div class="input-wrap"><input id="hourGreenMin" type="number" value="0" step="0.1" min="0"><b>%</b></div>
-        </label>
-        <label>
-          <span>Daily candle</span>
-          <select id="dailyMode" class="full-select">
-            <option value="current" selected>Current day (live)</option>
-            <option value="completed">Last completed day</option>
-          </select>
-        </label>
-        <label>
-          <span>Results</span>
-          <div class="input-wrap"><input id="maxResults" type="number" value="20" min="1" max="100"><b>max</b></div>
-        </label>
-      </div>
-      <div class="actions">
-        <button id="scanBtn" class="primary">Scan Binance Spot</button>
-        <button id="stopBtn" class="secondary" disabled>Stop</button>
-        <label class="toggle"><input id="autoRefresh" type="checkbox"><span></span> Auto refresh</label>
-        <select id="refreshMinutes" disabled>
-          <option value="5">Every 5 min</option>
-          <option value="10" selected>Every 10 min</option>
-          <option value="15">Every 15 min</option>
-          <option value="30">Every 30 min</option>
-        </select>
-      </div>
-      <div class="progress"><div id="progressBar"></div></div>
-      <div id="progressText" class="progress-text">No scan started.</div>
-    </section>
-
-    <section class="stats">
-      <div class="stat panel"><span>Pairs scanned</span><strong id="pairsScanned">—</strong></div>
-      <div class="stat panel"><span>Daily candidates</span><strong id="dailyCandidates">—</strong></div>
-      <div class="stat panel"><span>Exact matches</span><strong id="matchCount">—</strong></div>
-      <div class="stat panel"><span>Last scan</span><strong id="lastScan">—</strong></div>
-    </section>
-
-    <section class="panel diagnostics">
-      <div class="table-head">
-        <div>
-          <h2>Scan diagnostics</h2>
-          <p>This shows exactly where symbols are being filtered out.</p>
-        </div>
-      </div>
-      <div class="diag-grid">
-        <div><span>Pairs scanned</span><strong id="diagScanned">0</strong></div>
-        <div><span>Volume qualified</span><strong id="diagVolume">0</strong></div>
-        <div><span>Daily qualified</span><strong id="diagDaily">0</strong></div>
-        <div><span>1H exact matches</span><strong id="diagHourly">0</strong></div>
-        <div><span>Total matches</span><strong id="diagMatches">0</strong></div>
-      </div>
-    </section>
-
-    <section class="panel table-panel">
-      <div class="table-head">
-        <div>
-          <h2>Matches</h2>
-          <p>Completed candles only. Pattern uses the last three completed 1H candles.</p>
-        </div>
-        <button id="exportBtn" class="secondary small" disabled>Export CSV</button>
+        <input
+          id="dailyMin"
+          type="number"
+          value="20"
+          step="0.1"
+        >
       </div>
 
-      <div class="table-scroll">
-        <table>
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Coin</th>
-              <th>1D</th>
-              <th>1H -2</th>
-              <th>1H -1</th>
-              <th>1H Last</th>
-              <th>24H Vol</th>
-              <th>Chart</th>
-            </tr>
-          </thead>
-          <tbody id="resultsBody">
-            <tr class="empty"><td colspan="8">Run a scan to find matching coins.</td></tr>
-          </tbody>
-        </table>
+
+      <div>
+        <label>Minimum 24H volume</label>
+
+        <input
+          id="volumeMin"
+          type="number"
+          value="5000000"
+          step="100000"
+        >
       </div>
-    </section>
 
-    <footer>
-      <span>Public market data • No API key required</span>
-      <span>Not financial advice</span>
-    </footer>
-  </main>
 
-  <script src="app.js"></script>
+      <div>
+        <label>Latest 1H minimum %</label>
+
+        <input
+          id="hourMin"
+          type="number"
+          value="0"
+          step="0.1"
+        >
+      </div>
+
+
+      <div>
+        <label>Maximum results</label>
+
+        <input
+          id="maxResults"
+          type="number"
+          value="20"
+          min="1"
+          max="100"
+        >
+      </div>
+
+    </div>
+
+
+    <div class="buttons">
+
+      <button
+        id="scanBtn"
+        class="primary"
+      >
+        Scan Binance Spot
+      </button>
+
+
+      <button
+        id="stopBtn"
+        disabled
+      >
+        Stop
+      </button>
+
+    </div>
+
+
+    <div class="progress">
+
+      <div id="progressBar"></div>
+
+    </div>
+
+
+    <div
+      id="progressText"
+      class="progressText"
+    >
+      Ready.
+    </div>
+
+  </section>
+
+
+  <!-- STATS -->
+
+  <section class="stats">
+
+    <div class="stat">
+      <span>Binance symbols</span>
+      <strong id="totalSymbols">—</strong>
+    </div>
+
+
+    <div class="stat">
+      <span>Spot USDT pairs</span>
+      <strong id="spotSymbols">—</strong>
+    </div>
+
+
+    <div class="stat">
+      <span>Daily candidates</span>
+      <strong id="dailyCandidates">—</strong>
+    </div>
+
+
+    <div class="stat">
+      <span>Exact matches</span>
+      <strong id="matchCount">—</strong>
+    </div>
+
+  </section>
+
+
+  <!-- RESULTS -->
+
+  <section class="card">
+
+    <div class="resultsHeader">
+
+      <div>
+        <h2>Matches</h2>
+
+        <p>
+          Only Binance Spot USDT pairs are displayed.
+        </p>
+      </div>
+
+      <button
+        id="csvBtn"
+        disabled
+      >
+        Export CSV
+      </button>
+
+    </div>
+
+
+    <div class="tableWrapper">
+
+      <table>
+
+        <thead>
+
+          <tr>
+
+            <th>#</th>
+
+            <th>Coin</th>
+
+            <th>Market</th>
+
+            <th>1D</th>
+
+            <th>1H -2</th>
+
+            <th>1H -1</th>
+
+            <th>1H Last</th>
+
+            <th>24H Volume</th>
+
+            <th>Chart</th>
+
+          </tr>
+
+        </thead>
+
+
+        <tbody id="results">
+
+          <tr>
+
+            <td
+              colspan="9"
+              class="empty"
+            >
+              Click "Scan Binance Spot" to start.
+            </td>
+
+          </tr>
+
+        </tbody>
+
+      </table>
+
+    </div>
+
+  </section>
+
+
+  <footer>
+
+    Binance public market data • No API key required
+
+  </footer>
+
+</div>
+
+
+<script src="app.js"></script>
+
 </body>
 </html>
