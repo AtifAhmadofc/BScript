@@ -2,24 +2,64 @@ const API = "https://api.binance.com";
 
 let stopped = false;
 let results = [];
+let refreshTimer = null;
+
+
+/* =====================================================
+   DOM HELPERS
+===================================================== */
 
 const $ = (id) => document.getElementById(id);
 
-async function getJSON(path, params = {}) {
-  const url = new URL(API + path);
+function setStatus(text, type = "idle") {
+  $("statusText").textContent = text;
 
-  for (const [key, value] of Object.entries(params)) {
+  const dot = $("statusDot");
+
+  dot.className = "status-dot " + type;
+}
+
+
+function setProgress(percent, text) {
+  $("progressBar").style.width =
+    `${Math.max(0, Math.min(100, percent))}%`;
+
+  $("progressText").textContent = text;
+}
+
+
+/* =====================================================
+   BINANCE API
+===================================================== */
+
+async function getJSON(endpoint, params = {}) {
+
+  const url = new URL(API + endpoint);
+
+  Object.entries(params).forEach(([key, value]) => {
     url.searchParams.set(key, value);
-  }
+  });
 
-  const response = await fetch(url, { cache: "no-store" });
+  const response = await fetch(
+    url.toString(),
+    {
+      cache: "no-store"
+    }
+  );
 
   if (!response.ok) {
-    let message = `HTTP ${response.status}`;
+
+    let message =
+      `Binance API error ${response.status}`;
 
     try {
-      const error = await response.json();
-      if (error.msg) message += `: ${error.msg}`;
+      const error =
+        await response.json();
+
+      if (error.msg) {
+        message += `: ${error.msg}`;
+      }
+
     } catch (_) {}
 
     throw new Error(message);
@@ -28,23 +68,28 @@ async function getJSON(path, params = {}) {
   return response.json();
 }
 
+
+/* =====================================================
+   STRICT SPOT VALIDATION
+===================================================== */
+
 /*
-========================================================
-STRICT BINANCE SPOT FILTER
-========================================================
+IMPORTANT:
 
-A symbol is accepted ONLY when:
+We NEVER assume a symbol is Spot.
 
-1. status = TRADING
-2. quoteAsset = USDT
-3. Binance explicitly reports SPOT permission
+The symbol must satisfy:
 
-If Spot permission is missing, the symbol is rejected.
-There is NO fallback.
+status = TRADING
+quoteAsset = USDT
+explicit SPOT permission
+
+If Spot permission is missing,
+the symbol is rejected.
 */
 
-function isExplicitSpot(symbol) {
-  // Older Binance exchangeInfo format
+function hasSpotPermission(symbol) {
+
   if (
     Array.isArray(symbol.permissions) &&
     symbol.permissions.includes("SPOT")
@@ -52,77 +97,112 @@ function isExplicitSpot(symbol) {
     return true;
   }
 
-  // Current/alternate format
+
   if (
-    Array.isArray(symbol.permissionsSets) &&
-    symbol.permissionsSets.some(
-      (set) => Array.isArray(set) && set.includes("SPOT")
-    )
+    Array.isArray(symbol.permissionsSets)
   ) {
-    return true;
+
+    if (
+      symbol.permissionsSets.some(
+        set =>
+          Array.isArray(set) &&
+          set.includes("SPOT")
+      )
+    ) {
+      return true;
+    }
   }
 
-  // Legacy alternate spelling
+
   if (
-    Array.isArray(symbol.permissionSets) &&
-    symbol.permissionSets.some(
-      (set) => Array.isArray(set) && set.includes("SPOT")
-    )
+    Array.isArray(symbol.permissionSets)
   ) {
-    return true;
+
+    if (
+      symbol.permissionSets.some(
+        set =>
+          Array.isArray(set) &&
+          set.includes("SPOT")
+      )
+    ) {
+      return true;
+    }
   }
 
-  // IMPORTANT:
-  // Missing Spot permission = REJECT
+
   return false;
 }
 
-/*
-========================================================
-GET ONLY BINANCE SPOT USDT PAIRS
-========================================================
-*/
 
-async function getSpotUSDT() {
-  const exchangeInfo = await getJSON("/api/v3/exchangeInfo");
+/* =====================================================
+   GET BINANCE SPOT USDT SYMBOLS
+===================================================== */
 
-  const allSymbols = exchangeInfo.symbols || [];
+async function getSpotUSDTMarkets() {
+
+  const info =
+    await getJSON(
+      "/api/v3/exchangeInfo"
+    );
+
+  const all =
+    info.symbols || [];
+
 
   let tradingCount = 0;
   let usdtCount = 0;
   let spotCount = 0;
 
+
   const symbols = [];
 
-  for (const symbol of allSymbols) {
-    // Must be actively trading
+
+  for (const symbol of all) {
+
+    /*
+    1. Must be actively trading
+    */
+
     if (symbol.status !== "TRADING") {
       continue;
     }
 
     tradingCount++;
 
-    // Must have USDT as quote asset
+
+    /*
+    2. Must be USDT pair
+    */
+
     if (symbol.quoteAsset !== "USDT") {
       continue;
     }
 
     usdtCount++;
 
-    // MUST explicitly be Spot
-    if (!isExplicitSpot(symbol)) {
+
+    /*
+    3. MUST explicitly be Spot
+    */
+
+    if (!hasSpotPermission(symbol)) {
       continue;
     }
 
     spotCount++;
 
-    symbols.push(symbol.symbol);
+    symbols.push(
+      symbol.symbol
+    );
   }
 
+
   return {
+
     symbols,
+
     stats: {
-      total: allSymbols.length,
+      total: all.length,
       trading: tradingCount,
       usdt: usdtCount,
       spot: spotCount
@@ -130,316 +210,569 @@ async function getSpotUSDT() {
   };
 }
 
-/*
-========================================================
-24H TICKER
-========================================================
-*/
 
-async function getTickerMap() {
-  const tickers = await getJSON("/api/v3/ticker/24hr");
+/* =====================================================
+   24H TICKERS
+===================================================== */
 
-  const map = new Map();
+async function get24hTickers() {
+
+  const tickers =
+    await getJSON(
+      "/api/v3/ticker/24hr"
+    );
+
+  const map =
+    new Map();
+
 
   for (const ticker of tickers) {
+
     map.set(
       ticker.symbol,
-      Number(ticker.quoteVolume || 0)
+      {
+        volume:
+          Number(
+            ticker.quoteVolume || 0
+          ),
+
+        lastPrice:
+          Number(
+            ticker.lastPrice || 0
+          )
+      }
     );
   }
+
 
   return map;
 }
 
-/*
-========================================================
-CANDLE HELPERS
-========================================================
-*/
+
+/* =====================================================
+   CANDLE HELPERS
+===================================================== */
+
+function isCompleted(candle) {
+
+  const closeTime =
+    Number(candle[6]);
+
+  return closeTime <= Date.now();
+}
+
 
 function removeIncompleteCandles(candles) {
-  const now = Date.now();
 
   return candles.filter(
-    (candle) => Number(candle[6]) <= now
+    isCompleted
   );
 }
 
-function candleIsGreen(candle) {
-  return Number(candle[4]) > Number(candle[1]);
-}
 
-function candleIsRed(candle) {
-  return Number(candle[4]) < Number(candle[1]);
-}
+function isGreen(candle) {
 
-function candlePercentage(candle) {
-  const open = Number(candle[1]);
-  const close = Number(candle[4]);
-
-  if (!open) return 0;
-
-  return ((close - open) / open) * 100;
-}
-
-/*
-========================================================
-GET CANDLES
-========================================================
-*/
-
-async function getCandles(symbol, interval, limit) {
-  const candles = await getJSON(
-    "/api/v3/klines",
-    {
-      symbol,
-      interval,
-      limit
-    }
+  return (
+    Number(candle[4]) >
+    Number(candle[1])
   );
-
-  return removeIncompleteCandles(candles);
 }
 
-/*
-========================================================
-PROGRESS
-========================================================
-*/
 
-function setProgress(percent, message) {
-  const bar = $("bar");
+function isRed(candle) {
 
-  if (bar) {
-    bar.style.width = `${Math.max(
-      0,
-      Math.min(100, percent)
-    )}%`;
-  }
-
-  const progress = $("progress");
-
-  if (progress) {
-    progress.textContent = message;
-  }
+  return (
+    Number(candle[4]) <
+    Number(candle[1])
+  );
 }
 
-/*
-========================================================
-FORMAT
-========================================================
-*/
+
+function candleChange(candle) {
+
+  const open =
+    Number(candle[1]);
+
+  const close =
+    Number(candle[4]);
+
+
+  if (!open) {
+    return 0;
+  }
+
+
+  return (
+    (close - open) /
+    open *
+    100
+  );
+}
+
+
+/* =====================================================
+   GET KLINES
+===================================================== */
+
+async function getCandles(
+  symbol,
+  interval,
+  limit
+) {
+
+  const candles =
+    await getJSON(
+      "/api/v3/klines",
+      {
+        symbol,
+        interval,
+        limit
+      }
+    );
+
+
+  return removeIncompleteCandles(
+    candles
+  );
+}
+
+
+/* =====================================================
+   FORMATTERS
+===================================================== */
 
 function formatPercent(value) {
-  return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+
+  return (
+    value >= 0
+      ? "+"
+      : ""
+  ) +
+  value.toFixed(2) +
+  "%";
 }
+
 
 function formatVolume(value) {
+
   if (value >= 1e9) {
-    return `$${(value / 1e9).toFixed(2)}B`;
+
+    return (
+      "$" +
+      (value / 1e9)
+        .toFixed(2) +
+      "B"
+    );
   }
+
 
   if (value >= 1e6) {
-    return `$${(value / 1e6).toFixed(2)}M`;
+
+    return (
+      "$" +
+      (value / 1e6)
+        .toFixed(2) +
+      "M"
+    );
   }
+
 
   if (value >= 1e3) {
-    return `$${(value / 1e3).toFixed(1)}K`;
+
+    return (
+      "$" +
+      (value / 1e3)
+        .toFixed(1) +
+      "K"
+    );
   }
 
-  return `$${value.toFixed(0)}`;
+
+  return (
+    "$" +
+    value.toFixed(0)
+  );
 }
 
-/*
-========================================================
-MAIN SCANNER
-========================================================
-*/
+
+/* =====================================================
+   DAILY CANDLE
+===================================================== */
+
+async function getDailyCandle(
+  symbol,
+  mode
+) {
+
+  const candles =
+    await getJSON(
+      "/api/v3/klines",
+      {
+        symbol,
+        interval: "1d",
+        limit: 3
+      }
+    );
+
+
+  /*
+  Current day mode:
+
+  Binance returns the currently
+  forming daily candle as the last item.
+  */
+
+  if (mode === "current") {
+
+    return candles[
+      candles.length - 1
+    ];
+  }
+
+
+  /*
+  Completed day mode:
+
+  Remove current candle if incomplete,
+  then take latest completed candle.
+  */
+
+  const completed =
+    removeIncompleteCandles(
+      candles
+    );
+
+
+  if (!completed.length) {
+    return null;
+  }
+
+
+  return completed[
+    completed.length - 1
+  ];
+}
+
+
+/* =====================================================
+   SCAN
+===================================================== */
 
 async function scan() {
+
   stopped = false;
 
-  $("scan").disabled = true;
-  $("stop").disabled = false;
-  $("export").disabled = true;
 
-  $("status").textContent = "Scanning…";
+  $("scanBtn").disabled = true;
+  $("stopBtn").disabled = false;
+  $("exportBtn").disabled = true;
+
+
+  results = [];
+
+
+  $("pairsScanned").textContent = "—";
+  $("dailyCandidates").textContent = "—";
+  $("matchCount").textContent = "—";
+
+
+  $("diagScanned").textContent = "0";
+  $("diagVolume").textContent = "0";
+  $("diagDaily").textContent = "0";
+  $("diagHourly").textContent = "0";
+  $("diagMatches").textContent = "0";
+
+
+  setStatus(
+    "Loading Binance Spot markets…",
+    "working"
+  );
+
 
   try {
+
     const dailyMinimum =
-      Number($("dailyMin").value);
+      Number(
+        $("dailyMin").value
+      );
+
 
     const volumeMinimum =
-      Number($("volumeMin").value);
+      Number(
+        $("volumeMin").value
+      );
+
 
     const hourlyMinimum =
-      Number($("hourMin").value);
+      Number(
+        $("hourGreenMin").value
+      );
+
+
+    const dailyMode =
+      $("dailyMode").value;
+
 
     const maximumResults =
       Math.max(
         1,
         Math.min(
           100,
-          Number($("maxResults").value) || 20
+          Number(
+            $("maxResults").value
+          ) || 20
         )
       );
 
-    /*
-    --------------------------------------------
-    STEP 1
-    Get STRICT Spot USDT universe
-    --------------------------------------------
-    */
+
+    /* ================================================
+       GET STRICT SPOT UNIVERSE
+    ================================================ */
 
     const [
-      spotData,
+      marketData,
       tickerMap
-    ] = await Promise.all([
-      getSpotUSDT(),
-      getTickerMap()
-    ]);
+    ] =
+      await Promise.all([
+        getSpotUSDTMarkets(),
+        get24hTickers()
+      ]);
 
-    const symbols = spotData.symbols;
-    const stats = spotData.stats;
 
-    $("all").textContent = stats.total;
-    $("spot").textContent = stats.spot;
+    const symbols =
+      marketData.symbols;
+
+
+    const stats =
+      marketData.stats;
+
+
+    $("pairsScanned").textContent =
+      symbols.length;
+
 
     setProgress(
       0,
-      `Strict Spot filter: ${stats.spot} active Binance Spot USDT pairs found.`
+      `Found ${symbols.length} active Binance Spot USDT pairs.`
     );
 
-    /*
-    --------------------------------------------
-    STEP 2
-    DAILY FILTER
-    --------------------------------------------
-    */
+
+    /* ================================================
+       DAILY FILTER
+    ================================================ */
 
     const dailyCandidates = [];
 
-    let completed = 0;
 
-    const queue = [...symbols];
+    let scanned = 0;
+    let volumeQualified = 0;
+
+
+    const queue =
+      [...symbols];
+
+
+    /*
+    Limit concurrency.
+    */
+
+    const workerCount = 8;
+
 
     async function dailyWorker() {
-      while (queue.length && !stopped) {
-        const symbol = queue.shift();
+
+      while (
+        queue.length &&
+        !stopped
+      ) {
+
+        const symbol =
+          queue.shift();
+
 
         try {
-          const candles =
-            await getCandles(
-              symbol,
-              "1d",
-              2
-            );
 
-          if (!candles.length) {
-            continue;
-          }
+          const ticker =
+            tickerMap.get(symbol);
 
-          const latest =
-            candles[candles.length - 1];
-
-          const dailyChange =
-            candlePercentage(latest);
-
-          const volume =
-            tickerMap.get(symbol) || 0;
 
           /*
-          Daily conditions:
-
-          GREEN candle
-          +
-          >= configured percentage
-          +
-          >= configured volume
+          Volume filter FIRST
           */
 
           if (
-            candleIsGreen(latest) &&
-            dailyChange >= dailyMinimum &&
-            volume >= volumeMinimum
+            !ticker ||
+            ticker.volume <
+              volumeMinimum
           ) {
-            dailyCandidates.push({
-              symbol,
-              daily: dailyChange,
-              volume
-            });
+
+            scanned++;
+
+            $("diagScanned").textContent =
+              scanned;
+
+            continue;
           }
 
+
+          volumeQualified++;
+
+
+          $("diagVolume").textContent =
+            volumeQualified;
+
+
+          /*
+          Get daily candle
+          */
+
+          const candle =
+            await getDailyCandle(
+              symbol,
+              dailyMode
+            );
+
+
+          if (!candle) {
+            continue;
+          }
+
+
+          const dailyChange =
+            candleChange(
+              candle
+            );
+
+
+          /*
+          Must be GREEN
+          */
+
+          if (!isGreen(candle)) {
+            continue;
+          }
+
+
+          /*
+          Must meet daily %
+          */
+
+          if (
+            dailyChange <
+            dailyMinimum
+          ) {
+            continue;
+          }
+
+
+          dailyCandidates.push({
+
+            symbol,
+
+            daily:
+              dailyChange,
+
+            volume:
+              ticker.volume
+          });
+
+
+          $("diagDaily").textContent =
+            dailyCandidates.length;
+
+
         } catch (error) {
+
           console.warn(
-            `Daily error: ${symbol}`,
+            "Daily error:",
+            symbol,
             error
           );
-        }
 
-        completed++;
+        } finally {
 
-        if (
-          completed % 5 === 0 ||
-          completed === symbols.length
-        ) {
-          setProgress(
-            (completed / symbols.length) * 100,
-            `1D scan: ${completed}/${symbols.length} • Daily qualified: ${dailyCandidates.length}`
-          );
+          scanned++;
+
+          $("diagScanned").textContent =
+            scanned;
+
+
+          if (
+            scanned % 5 === 0 ||
+            scanned === symbols.length
+          ) {
+
+            setProgress(
+
+              (
+                scanned /
+                symbols.length
+              ) * 60,
+
+              `Scanning 1D: ${scanned}/${symbols.length} • Daily qualified: ${dailyCandidates.length}`
+            );
+          }
         }
       }
     }
 
-    /*
-    Use multiple workers to speed up scanning
-    */
 
     await Promise.all(
       Array.from(
-        { length: 6 },
+        {
+          length:
+            workerCount
+        },
         dailyWorker
       )
     );
 
-    $("daily").textContent =
+
+    $("dailyCandidates").textContent =
       dailyCandidates.length;
 
+
     if (stopped) {
-      $("status").textContent = "Stopped";
+
+      setStatus(
+        "Stopped",
+        "idle"
+      );
+
       return;
     }
 
-    /*
-    --------------------------------------------
-    STEP 3
-    1H PATTERN
 
-    RED
-    RED
-    GREEN
+    /* ================================================
+       HOURLY FILTER
+    ================================================ */
 
-    These are the latest COMPLETED
-    1H candles.
-    --------------------------------------------
-    */
+    setStatus(
+      "Checking 1H pattern…",
+      "working"
+    );
 
-    const matches = [];
-
-    completed = 0;
 
     const hourlyQueue =
       [...dailyCandidates];
 
+
+    let hourlyChecked = 0;
+
+
     async function hourlyWorker() {
+
       while (
         hourlyQueue.length &&
         !stopped
       ) {
+
         const candidate =
           hourlyQueue.shift();
 
+
         try {
+
           const candles =
             await getCandles(
               candidate.symbol,
@@ -447,157 +780,276 @@ async function scan() {
               5
             );
 
-          if (candles.length < 3) {
+
+          /*
+          Need at least 3 completed candles
+          */
+
+          if (
+            candles.length < 3
+          ) {
             continue;
           }
 
-          const red2 =
-            candles[candles.length - 3];
 
-          const red1 =
-            candles[candles.length - 2];
+          /*
+          Latest three completed candles
 
-          const green =
-            candles[candles.length - 1];
+          -2 = older RED
+          -1 = newer RED
+          Last = GREEN
+          */
 
-          const red2Change =
-            candlePercentage(red2);
+          const candle2 =
+            candles[
+              candles.length - 3
+            ];
 
-          const red1Change =
-            candlePercentage(red1);
 
-          const greenChange =
-            candlePercentage(green);
+          const candle1 =
+            candles[
+              candles.length - 2
+            ];
+
+
+          const candleLast =
+            candles[
+              candles.length - 1
+            ];
+
+
+          const change2 =
+            candleChange(
+              candle2
+            );
+
+
+          const change1 =
+            candleChange(
+              candle1
+            );
+
+
+          const changeLast =
+            candleChange(
+              candleLast
+            );
+
 
           /*
           EXACT PATTERN:
 
-          🔴 RED
-          🔴 RED
-          🟢 GREEN
+          RED
+          RED
+          GREEN
           */
 
           if (
-            candleIsRed(red2) &&
-            candleIsRed(red1) &&
-            candleIsGreen(green) &&
-            greenChange >= hourlyMinimum
+            isRed(candle2) &&
+            isRed(candle1) &&
+            isGreen(candleLast) &&
+            changeLast >=
+              hourlyMinimum
           ) {
-            matches.push({
-              symbol: candidate.symbol,
-              daily: candidate.daily,
-              h2: red2Change,
-              h1: red1Change,
-              h0: greenChange,
-              volume: candidate.volume
+
+            results.push({
+
+              symbol:
+                candidate.symbol,
+
+              daily:
+                candidate.daily,
+
+              h2:
+                change2,
+
+              h1:
+                change1,
+
+              h0:
+                changeLast,
+
+              volume:
+                candidate.volume
             });
+
+
+            $("diagHourly").textContent =
+              results.length;
+
+
+            $("diagMatches").textContent =
+              results.length;
           }
 
+
         } catch (error) {
+
           console.warn(
-            `1H error: ${candidate.symbol}`,
+            "1H error:",
+            candidate.symbol,
             error
           );
-        }
 
-        completed++;
+        } finally {
 
-        if (
-          completed % 2 === 0 ||
-          completed === dailyCandidates.length
-        ) {
-          setProgress(
-            (completed /
-              Math.max(
-                1,
-                dailyCandidates.length
-              )) * 100,
-            `1H scan: ${completed}/${dailyCandidates.length} • Exact matches: ${matches.length}`
-          );
+          hourlyChecked++;
+
+
+          if (
+            hourlyChecked % 2 === 0 ||
+            hourlyChecked ===
+              dailyCandidates.length
+          ) {
+
+            setProgress(
+
+              60 +
+              (
+                hourlyChecked /
+                Math.max(
+                  1,
+                  dailyCandidates.length
+                )
+              ) * 40,
+
+              `Checking 1H: ${hourlyChecked}/${dailyCandidates.length} • Exact matches: ${results.length}`
+            );
+          }
         }
       }
     }
 
+
     await Promise.all(
       Array.from(
-        { length: 6 },
+        {
+          length:
+            workerCount
+        },
         hourlyWorker
       )
     );
 
-    /*
-    --------------------------------------------
-    SORT
-    --------------------------------------------
-    */
 
-    matches.sort(
+    if (stopped) {
+
+      setStatus(
+        "Stopped",
+        "idle"
+      );
+
+      return;
+    }
+
+
+    /* ================================================
+       SORT + LIMIT
+    ================================================ */
+
+    results.sort(
       (a, b) =>
-        b.daily - a.daily
+        b.daily -
+        a.daily
     );
 
+
     results =
-      matches.slice(
+      results.slice(
         0,
         maximumResults
       );
 
-    /*
-    --------------------------------------------
-    RENDER
-    --------------------------------------------
-    */
+
+    /* ================================================
+       UPDATE UI
+    ================================================ */
 
     renderResults();
 
-    $("matches").textContent =
+
+    $("dailyCandidates").textContent =
+      dailyCandidates.length;
+
+
+    $("matchCount").textContent =
       results.length;
 
-    $("status").textContent =
+
+    $("diagMatches").textContent =
+      results.length;
+
+
+    $("lastScan").textContent =
+      new Date().toLocaleTimeString();
+
+
+    setProgress(
+      100,
+
+      `Finished • ${symbols.length} Spot USDT pairs → ${dailyCandidates.length} daily candidates → ${results.length} matches`
+    );
+
+
+    setStatus(
       `${results.length} match${
         results.length === 1
           ? ""
           : "es"
-      }`;
-
-    setProgress(
-      100,
-      `Finished: ${stats.spot} strict Spot USDT pairs → ${dailyCandidates.length} daily qualified → ${matches.length} exact matches.`
+      } found`,
+      results.length
+        ? "success"
+        : "idle"
     );
+
+
+    if (results.length) {
+      $("exportBtn").disabled =
+        false;
+    }
+
 
   } catch (error) {
 
     console.error(error);
 
-    $("status").textContent =
-      "Error";
 
-    $("progress").textContent =
+    setStatus(
+      "Scanner error",
+      "error"
+    );
+
+
+    $("progressText").textContent =
       error.message;
+
 
   } finally {
 
-    $("scan").disabled = false;
-    $("stop").disabled = true;
+    $("scanBtn").disabled =
+      false;
+
+    $("stopBtn").disabled =
+      true;
   }
 }
 
-/*
-========================================================
-RENDER RESULTS
-========================================================
-*/
+
+/* =====================================================
+   RENDER RESULTS
+===================================================== */
 
 function renderResults() {
 
-  const rows =
-    $("rows");
+  const body =
+    $("resultsBody");
+
 
   if (!results.length) {
 
-    rows.innerHTML = `
-      <tr>
-        <td colspan="9" class="empty">
+    body.innerHTML = `
+      <tr class="empty">
+        <td colspan="8">
           No Binance Spot USDT pair currently
           matches all conditions.
         </td>
@@ -607,72 +1059,81 @@ function renderResults() {
     return;
   }
 
-  rows.innerHTML =
+
+  body.innerHTML =
     results
       .map(
-        (r, index) => `
-<tr>
+        (r, index) => {
 
-<td>
-  ${index + 1}
-</td>
+          return `
+            <tr>
 
-<td>
-  <span class="coin">
-    ${r.symbol}
-  </span>
-</td>
+              <td>
+                ${index + 1}
+              </td>
 
-<td>
-  <span class="spot">
-    ✓ SPOT
-  </span>
-</td>
+              <td>
+                <strong>
+                  ${r.symbol}
+                </strong>
 
-<td class="green">
-  ${formatPercent(r.daily)}
-</td>
+                <span class="spot-badge">
+                  ✓ SPOT
+                </span>
+              </td>
 
-<td class="red">
-  ${formatPercent(r.h2)}
-</td>
+              <td class="green">
+                ${formatPercent(
+                  r.daily
+                )}
+              </td>
 
-<td class="red">
-  ${formatPercent(r.h1)}
-</td>
+              <td class="red">
+                ${formatPercent(
+                  r.h2
+                )}
+              </td>
 
-<td class="green">
-  ${formatPercent(r.h0)}
-</td>
+              <td class="red">
+                ${formatPercent(
+                  r.h1
+                )}
+              </td>
 
-<td>
-  ${formatVolume(r.volume)}
-</td>
+              <td class="green">
+                ${formatPercent(
+                  r.h0
+                )}
+              </td>
 
-<td>
-  <a
-    class="chart"
-    target="_blank"
-    rel="noopener"
-    href="https://www.binance.com/en/trade/${r.symbol}?type=spot"
-  >
-    Open ↗
-  </a>
-</td>
+              <td>
+                ${formatVolume(
+                  r.volume
+                )}
+              </td>
 
-</tr>
-`
+              <td>
+                <a
+                  class="chart"
+                  target="_blank"
+                  rel="noopener"
+                  href="https://www.binance.com/en/trade/${r.symbol}?type=spot"
+                >
+                  Open ↗
+                </a>
+              </td>
+
+            </tr>
+          `;
+        }
       )
       .join("");
-
-  $("export").disabled = false;
 }
 
-/*
-========================================================
-CSV EXPORT
-========================================================
-*/
+
+/* =====================================================
+   CSV EXPORT
+===================================================== */
 
 function exportCSV() {
 
@@ -680,7 +1141,9 @@ function exportCSV() {
     return;
   }
 
-  const data = [
+
+  const rows = [
+
     [
       "Rank",
       "Symbol",
@@ -691,70 +1154,194 @@ function exportCSV() {
       "1H Last %",
       "24H Quote Volume"
     ]
+
   ];
+
 
   results.forEach(
     (r, index) => {
 
-      data.push([
+      rows.push([
+
         index + 1,
+
         r.symbol,
+
         "BINANCE SPOT",
+
         r.daily.toFixed(4),
+
         r.h2.toFixed(4),
+
         r.h1.toFixed(4),
+
         r.h0.toFixed(4),
+
         r.volume.toFixed(2)
+
       ]);
 
     }
   );
 
+
   const csv =
-    data
+    rows
       .map(
         row =>
           row
             .map(
               value =>
                 `"${String(value)
-                  .replaceAll('"', '""')}"`
+                  .replaceAll(
+                    '"',
+                    '""'
+                  )}"`
             )
             .join(",")
       )
       .join("\n");
 
+
   const blob =
     new Blob(
       [csv],
-      { type: "text/csv" }
+      {
+        type:
+          "text/csv;charset=utf-8"
+      }
     );
+
+
+  const url =
+    URL.createObjectURL(
+      blob
+    );
+
 
   const link =
     document.createElement("a");
 
-  link.href =
-    URL.createObjectURL(blob);
+
+  link.href = url;
 
   link.download =
     "binance-spot-scanner.csv";
 
+
+  document.body.appendChild(
+    link
+  );
+
   link.click();
+
+  link.remove();
+
+
+  URL.revokeObjectURL(
+    url
+  );
 }
 
-/*
-========================================================
-BUTTONS
-========================================================
-*/
 
-$("scan").onclick = scan;
+/* =====================================================
+   STOP
+===================================================== */
 
-$("stop").onclick = () => {
-  stopped = true;
-  $("status").textContent =
-    "Stopping…";
-};
+$("stopBtn").onclick =
+  () => {
 
-$("export").onclick =
+    stopped = true;
+
+    setStatus(
+      "Stopping…",
+      "idle"
+    );
+  };
+
+
+/* =====================================================
+   AUTO REFRESH
+===================================================== */
+
+$("autoRefresh").addEventListener(
+  "change",
+  () => {
+
+    const enabled =
+      $("autoRefresh").checked;
+
+
+    $("refreshMinutes").disabled =
+      !enabled;
+
+
+    if (refreshTimer) {
+
+      clearInterval(
+        refreshTimer
+      );
+
+      refreshTimer = null;
+    }
+
+
+    if (enabled) {
+
+      const minutes =
+        Number(
+          $("refreshMinutes").value
+        );
+
+
+      refreshTimer =
+        setInterval(
+          () => {
+
+            if (
+              !$("scanBtn").disabled
+            ) {
+
+              scan();
+            }
+
+          },
+          minutes *
+          60 *
+          1000
+        );
+    }
+  }
+);
+
+
+$("refreshMinutes").addEventListener(
+  "change",
+  () => {
+
+    if (
+      $("autoRefresh").checked
+    ) {
+
+      $("autoRefresh").dispatchEvent(
+        new Event("change")
+      );
+
+      $("autoRefresh").dispatchEvent(
+        new Event("change")
+      );
+    }
+  }
+);
+
+
+/* =====================================================
+   BUTTONS
+===================================================== */
+
+$("scanBtn").onclick =
+  scan;
+
+
+$("exportBtn").onclick =
   exportCSV;
